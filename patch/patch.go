@@ -20,7 +20,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-type Workflow struct {
+type workflow struct {
 	Name string `yaml:"name"`
 	Jobs map[string]struct {
 		Name  string `yaml:"name"`
@@ -43,8 +43,8 @@ func checkCommandExist(path string) {
 	}
 }
 
-// ProcessOrganization processes all repositories in the given organization.
-func ProcessOrganization(ctx context.Context, orgName string, opts PatchOptions) error {
+// Organization processes all repositories in the given organization.
+func Organization(ctx context.Context, orgName string, opts PatchOptions) error {
 	_, err := iterator.RunForOrganization(ctx, orgName, iterator.SearchOptions{
 		ArchiveCondition: iterator.OmitArchived,
 		SizeCondition:    iterator.NotEmpty,
@@ -59,8 +59,8 @@ func ProcessOrganization(ctx context.Context, orgName string, opts PatchOptions)
 	return err
 }
 
-// ProcessRepository processes a single repository.
-func ProcessRepository(ctx context.Context, repo string, opts PatchOptions) error {
+// Repository processes a single repository.
+func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
 	if strings.HasPrefix(repo, ".") || strings.HasPrefix(repo, "/") {
 		fs := afero.NewBasePathFs(afero.NewOsFs(), repo)
@@ -103,7 +103,7 @@ func patchLocalRepositoryFS(ctx context.Context, fs afero.Fs, opts PatchOptions)
 			return err
 		}
 
-		wf := Workflow{}
+		wf := workflow{}
 		if err := yaml.Unmarshal(wfb, &wf); err != nil {
 			return err
 		}
@@ -209,21 +209,17 @@ func patchRepository(ctx context.Context, _ string, isEmpty bool, xr iteratorexe
 		return err
 	}
 
-	body, err := opts.prBodyContent()
-	if err != nil {
-		return err
-	}
-
 	prURL, _, err := github.CreatePRIfNotExist(ctx, xr, github.PROptions{
 		Title: opts.CommitMsg,
-		Body:  body,
+		Body:  opts.PRBody,
 		Head:  opts.TargetBranch,
 	})
 	if err != nil {
 		return err
 	}
 
-	fmt.Printf("Created PR: %s\n", prURL)
+	xr.Log(ctx, slog.LevelDebug, "PR created", "pr_url", prURL)
+
 	return nil
 }
 

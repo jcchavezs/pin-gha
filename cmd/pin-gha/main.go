@@ -1,12 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 
-	"github.com/jcchavezs/pin-gha/internal/patch"
+	"github.com/jcchavezs/pin-gha/patch"
 	"github.com/spf13/cobra"
 	"github.com/thediveo/enumflag/v2"
 )
@@ -33,15 +34,34 @@ var patchFlags struct {
 	prTrustedOrgs []string
 }
 
+func getPRBodyFromPath(path string) (string, error) {
+	var prBody string
+	if patchFlags.prBodyPath != "" {
+		b, err := os.ReadFile(patchFlags.prBodyPath)
+		if err != nil {
+			return "", fmt.Errorf("reading PR body file: %w", err)
+		}
+		prBody = string(b)
+	}
+
+	return prBody, nil
+}
+
 var repositoryCmd = &cobra.Command{
 	Use:   "repository [<name>|<path>]",
 	Short: "Pin actions in a single GitHub repository or a local repository",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
-		return patch.ProcessRepository(cmd.Context(), args[0], patch.PatchOptions{
+
+		prBody, err := getPRBodyFromPath(patchFlags.prBodyPath)
+		if err != nil {
+			return fmt.Errorf("getting PR body: %w", err)
+		}
+
+		return patch.Repository(cmd.Context(), args[0], patch.PatchOptions{
 			TargetBranch: patchFlags.prBranch,
-			PRBodyPath:   patchFlags.prBodyPath,
+			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
 		})
@@ -54,9 +74,15 @@ var organizationCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
-		return patch.ProcessOrganization(cmd.Context(), args[0], patch.PatchOptions{
+
+		prBody, err := getPRBodyFromPath(patchFlags.prBodyPath)
+		if err != nil {
+			return fmt.Errorf("getting PR body: %w", err)
+		}
+
+		return patch.Organization(cmd.Context(), args[0], patch.PatchOptions{
 			TargetBranch: patchFlags.prBranch,
-			PRBodyPath:   patchFlags.prBodyPath,
+			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
 		})
