@@ -11,3 +11,6 @@ test:
 	@go test ./...
 
 .PHONY: test
+
+generate:
+	@go run ./cmd/pin-gha local-repository .

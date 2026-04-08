@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -36,8 +37,8 @@ var patchFlags struct {
 
 func getPRBodyFromPath(path string) (string, error) {
 	var prBody string
-	if patchFlags.prBodyPath != "" {
-		b, err := os.ReadFile(patchFlags.prBodyPath)
+	if path != "" {
+		b, err := os.ReadFile(path)
 		if err != nil {
 			return "", fmt.Errorf("reading PR body file: %w", err)
 		}
@@ -48,8 +49,8 @@ func getPRBodyFromPath(path string) (string, error) {
 }
 
 var repositoryCmd = &cobra.Command{
-	Use:   "repository [<name>|<path>]",
-	Short: "Pin actions in a single GitHub repository or a local repository",
+	Use:   "repository [<name>]",
+	Short: "Pin actions in a single GitHub repository",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -64,6 +65,9 @@ var repositoryCmd = &cobra.Command{
 			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
+			OnPRCreated: func(ctx context.Context, p patch.PRDetails) {
+				cmd.Printf("PR created: %s\n", p.URL)
+			},
 		})
 	},
 }
@@ -85,6 +89,9 @@ var organizationCmd = &cobra.Command{
 			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
+			OnPRCreated: func(ctx context.Context, p patch.PRDetails) {
+				cmd.Printf("PR created: %s\n", p.URL)
+			},
 		})
 	},
 }
@@ -105,6 +112,17 @@ var actionCmd = &cobra.Command{
 	},
 }
 
+var localRepositoryCmd = &cobra.Command{
+	Use:   "local-repository [<name>|<path>]",
+	Short: "Pin actions in a local repository",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+
+		return patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{})
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().Var(
 		enumflag.New(&loglevel, "string", LevelIds, enumflag.EnumCaseInsensitive),
@@ -112,7 +130,7 @@ func init() {
 		"Sets the log level",
 	)
 
-	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd)
+	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd, localRepositoryCmd)
 
 	repositoryCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-actions", "Branch name used when creating or updating PRs")
 	repositoryCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")

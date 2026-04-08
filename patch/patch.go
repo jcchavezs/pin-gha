@@ -45,14 +45,16 @@ func checkCommandExist(path string) {
 
 // Organization processes all repositories in the given organization.
 func Organization(ctx context.Context, orgName string, opts PatchOptions) error {
+	opts = opts.withDefaults()
+
 	_, err := iterator.RunForOrganization(ctx, orgName, iterator.SearchOptions{
 		ArchiveCondition: iterator.OmitArchived,
 		SizeCondition:    iterator.NotEmpty,
 	}, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		return patchRepository(ctx, repo, isEmpty, xr, opts)
+		return patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts)
 	}, iterator.Options{
 		UseHTTPS:      true,
-		LogHandler:    slog.Default().Handler(),
+		LogHandler:    opts.LogHandler,
 		CloningSubset: []string{".github/workflows"},
 	})
 
@@ -62,23 +64,23 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 // Repository processes a single repository.
 func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
-	if strings.HasPrefix(repo, ".") || strings.HasPrefix(repo, "/") {
-		fs := afero.NewBasePathFs(afero.NewOsFs(), repo)
-		return patchLocalRepositoryFS(ctx, fs, opts)
-	}
 
 	return iterator.RunForRepository(ctx, repo, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		return patchRepository(ctx, repo, isEmpty, xr, opts)
+		return patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts)
 	}, iterator.Options{
 		UseHTTPS:      true,
-		LogHandler:    slog.Default().Handler(),
+		LogHandler:    opts.LogHandler,
 		CloningSubset: []string{".github/workflows"},
 	})
 }
 
-// patchLocalRepositoryFS applies the patch to the given FS. This is used for testing.
-func patchLocalRepositoryFS(ctx context.Context, fs afero.Fs, opts PatchOptions) error {
+func LocalRepository(ctx context.Context, repoPath string, opts LocalPatchOptions) error {
 	opts = opts.withDefaults()
+	return patchLocalRepositoryFS(ctx, slog.New(opts.LogHandler), afero.NewBasePathFs(afero.NewOsFs(), repoPath), opts.TrustedOrgs)
+}
+
+// patchLocalRepositoryFS applies the patch to the given FS. This is used for testing.
+func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string) error {
 	today := time.Now().Format("2006-01-02")
 	files, err := afero.ReadDir(fs, path.Join(".github", "workflows"))
 	if err != nil {
@@ -86,6 +88,10 @@ func patchLocalRepositoryFS(ctx context.Context, fs afero.Fs, opts PatchOptions)
 			return nil
 		}
 		return err
+	}
+
+	if len(files) == 0 {
+		logger.Debug("No files found")
 	}
 
 	for _, file := range files {
@@ -103,9 +109,10 @@ func patchLocalRepositoryFS(ctx context.Context, fs afero.Fs, opts PatchOptions)
 			return err
 		}
 
+		wfLogger := logger.With("workflow", file.Name())
 		wf := workflow{}
 		if err := yaml.Unmarshal(wfb, &wf); err != nil {
-			return err
+			return fmt.Errorf("unmarshalling workflow %q: %v", file.Name(), err)
 		}
 
 		for _, job := range wf.Jobs {
@@ -116,17 +123,19 @@ func patchLocalRepositoryFS(ctx context.Context, fs afero.Fs, opts PatchOptions)
 				}
 
 				isTrusted := false
-				for _, org := range opts.TrustedOrgs {
+				for _, org := range trustedOrgs {
 					if strings.HasPrefix(uses, org+"/") {
 						isTrusted = true
 						break
 					}
 				}
 				if isTrusted {
+					wfLogger.Debug("Skipping trusted action", "uses", uses)
 					continue
 				}
 
 				if strings.HasPrefix(uses, "./") {
+					wfLogger.Debug("Skipping local action", "uses", uses)
 					//if exists, _ := afero.Exists(fs, uses); exists {
 					// local action
 					continue
@@ -150,7 +159,7 @@ func patchLocalRepositoryFS(ctx context.Context, fs afero.Fs, opts PatchOptions)
 					if resolvedVersion == "master" || resolvedVersion == "main" {
 						newUses = fmt.Sprintf("%s@%s # %s on %s, TODO: use a release instead", pkg, resolvedHash, resolvedVersion, today)
 					} else if strings.Count(resolvedVersion, ".") < 2 {
-						newUses = fmt.Sprintf("%s@%s # %s on %s, TODO: consider using a release", pkg, resolvedHash, resolvedVersion, today)
+						newUses = fmt.Sprintf("%s@%s # %s on %s, TODO: use a release instead", pkg, resolvedHash, resolvedVersion, today)
 					} else {
 						newUses = fmt.Sprintf("%s@%s # %s", pkg, resolvedHash, resolvedVersion)
 					}
@@ -175,14 +184,12 @@ func patchLocalRepositoryFS(ctx context.Context, fs afero.Fs, opts PatchOptions)
 
 // patchRepository is the function that will be called for each repository by the iterator.
 // It applies the patch and creates a PR if there are changes.
-func patchRepository(ctx context.Context, _ string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
+func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
 	if isEmpty {
 		return nil
 	}
 
-	opts = opts.withDefaults()
-
-	if err := patchLocalRepositoryFS(ctx, xr.GenerateFS(), opts); err != nil {
+	if err := patchLocalRepositoryFS(ctx, logger, xr.GenerateFS(), opts.TrustedOrgs); err != nil {
 		return err
 	}
 
@@ -213,12 +220,20 @@ func patchRepository(ctx context.Context, _ string, isEmpty bool, xr iteratorexe
 		Title: opts.CommitMsg,
 		Body:  opts.PRBody,
 		Head:  opts.TargetBranch,
+		Draft: opts.PRAsDraft,
 	})
 	if err != nil {
 		return err
 	}
 
 	xr.Log(ctx, slog.LevelDebug, "PR created", "pr_url", prURL)
+
+	if opts.OnPRCreated != nil {
+		opts.OnPRCreated(ctx, PRDetails{
+			URL:        prURL,
+			Repository: repo,
+		})
+	}
 
 	return nil
 }
