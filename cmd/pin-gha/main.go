@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"os"
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 
-	"github.com/jcchavezs/pin-gha/internal/patch"
+	"github.com/jcchavezs/pin-gha/patch"
 	"github.com/spf13/cobra"
 	"github.com/thediveo/enumflag/v2"
 )
@@ -33,17 +35,39 @@ var patchFlags struct {
 	prTrustedOrgs []string
 }
 
+func getPRBodyFromPath(path string) (string, error) {
+	var prBody string
+	if path != "" {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("reading PR body file: %w", err)
+		}
+		prBody = string(b)
+	}
+
+	return prBody, nil
+}
+
 var repositoryCmd = &cobra.Command{
-	Use:   "repository [<name>|<path>]",
-	Short: "Pin actions in a single GitHub repository or a local repository",
+	Use:   "repository [<name>]",
+	Short: "Pin actions in a single GitHub repository",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
-		return patch.ProcessRepository(cmd.Context(), args[0], patch.PatchOptions{
+
+		prBody, err := getPRBodyFromPath(patchFlags.prBodyPath)
+		if err != nil {
+			return fmt.Errorf("getting PR body: %w", err)
+		}
+
+		return patch.Repository(cmd.Context(), args[0], patch.PatchOptions{
 			TargetBranch: patchFlags.prBranch,
-			PRBodyPath:   patchFlags.prBodyPath,
+			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
+			OnPRCreated: func(ctx context.Context, p patch.PRDetails) {
+				cmd.Printf("PR created: %s\n", p.URL)
+			},
 		})
 	},
 }
@@ -54,11 +78,20 @@ var organizationCmd = &cobra.Command{
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
-		return patch.ProcessOrganization(cmd.Context(), args[0], patch.PatchOptions{
+
+		prBody, err := getPRBodyFromPath(patchFlags.prBodyPath)
+		if err != nil {
+			return fmt.Errorf("getting PR body: %w", err)
+		}
+
+		return patch.Organization(cmd.Context(), args[0], patch.PatchOptions{
 			TargetBranch: patchFlags.prBranch,
-			PRBodyPath:   patchFlags.prBodyPath,
+			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
+			OnPRCreated: func(ctx context.Context, p patch.PRDetails) {
+				cmd.Printf("PR created: %s\n", p.URL)
+			},
 		})
 	},
 }
@@ -79,6 +112,17 @@ var actionCmd = &cobra.Command{
 	},
 }
 
+var localRepositoryCmd = &cobra.Command{
+	Use:   "local-repository [<name>|<path>]",
+	Short: "Pin actions in a local repository",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.SilenceUsage = true
+
+		return patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{})
+	},
+}
+
 func init() {
 	rootCmd.PersistentFlags().Var(
 		enumflag.New(&loglevel, "string", LevelIds, enumflag.EnumCaseInsensitive),
@@ -86,7 +130,7 @@ func init() {
 		"Sets the log level",
 	)
 
-	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd)
+	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd, localRepositoryCmd)
 
 	repositoryCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-actions", "Branch name used when creating or updating PRs")
 	repositoryCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")

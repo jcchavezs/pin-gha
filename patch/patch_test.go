@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,7 +83,7 @@ func TestPatchRepository_NoChanges(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, "org/repo", false, xr, PatchOptions{}))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}))
 }
 
 // TestPatchRepository_HasChanges_NewPR verifies the happy path: when HasChanges
@@ -137,10 +138,10 @@ func TestPatchRepository_HasChanges_NewPR(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, "org/repo", false, xr, PatchOptions{}))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
 	require.Equal(t, defaultTagetBranch, checkedOutBranch)
 	require.Equal(t, ".github/workflows", addedPath)
-	require.Equal(t, "chore(security): uses pinned versions of actions", commitMessage)
+	require.Equal(t, "chore(sec|gha): uses pinned versions of github actions", commitMessage)
 	require.Equal(t, defaultTagetBranch, pushedBranch)
 }
 
@@ -185,7 +186,7 @@ func TestPatchRepository_HasChanges_PRAlreadyExists(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, "org/repo", false, xr, PatchOptions{}))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}))
 }
 
 // TestPatchRepository_HasChangesError verifies that an error from HasChanges
@@ -202,7 +203,7 @@ func TestPatchRepository_HasChangesError(t *testing.T) {
 		},
 	}
 
-	require.Error(t, patchRepository(ctx, "org/repo", false, xr, PatchOptions{}))
+	require.Error(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}))
 }
 
 // ---- helpers for patchLocalRepositoryFS tests ----
@@ -236,14 +237,14 @@ func withMockResolver(t *testing.T, fn func(_ context.Context, action, version s
 
 func TestPatchLocalRepositoryFS(t *testing.T) {
 	t.Run("no workflows directory returns nil", func(t *testing.T) {
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), afero.NewMemMapFs(), PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), afero.NewMemMapFs(), nil))
 	})
 
 	t.Run("non yaml files are ignored", func(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
 		require.NoError(t, afero.WriteFile(fs, ".github/workflows/notes.txt", []byte("not yaml"), 0644))
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		// Verify the non-yaml file is unchanged.
 		b, err := afero.ReadFile(fs, ".github/workflows/notes.txt")
 		require.NoError(t, err)
@@ -254,7 +255,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		const content = "jobs:\n  build:\n    steps:\n      - name: Run something\n"
 		setupWorkflow(t, fs, content)
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -262,9 +263,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		const content = "jobs:\n  build:\n    steps:\n      - uses: jcchavezs/my-action@v1.2.3\n"
 		setupWorkflow(t, fs, content)
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{
-			TrustedOrgs: []string{"jcchavezs"},
-		}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, []string{"jcchavezs"}))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -274,7 +273,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		setupWorkflow(t, fs, content)
 		// afero.Exists normalises ./local-action → local-action; create the dir.
 		require.NoError(t, fs.MkdirAll("local-action", 0755))
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -282,7 +281,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		content := fmt.Sprintf("jobs:\n  build:\n    steps:\n      - uses: actions/checkout@%s\n", mockHash)
 		setupWorkflow(t, fs, content)
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -290,7 +289,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		const content = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout\n"
 		setupWorkflow(t, fs, content)
-		require.Error(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.Error(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 	})
 
 	t.Run("stable release is pinned with hash and version comment", func(t *testing.T) {
@@ -303,7 +302,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 			}
 			return "", "", fmt.Errorf("unexpected: %s@%s", action, version)
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		got := readWorkflowContent(t, fs)
 		require.Contains(t, got, fmt.Sprintf("actions/checkout@%s # v4.1.0", mockHash))
 		require.NotContains(t, got, "actions/checkout@v4.1.0")
@@ -316,7 +315,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return mockHash, "main", nil
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		today := time.Now().Format("2006-01-02")
 		require.Contains(t, readWorkflowContent(t, fs), fmt.Sprintf("actions/checkout@%s # main on %s, TODO: use a release instead", mockHash, today))
 	})
@@ -328,9 +327,9 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return mockHash, "v4.1", nil
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		today := time.Now().Format("2006-01-02")
-		require.Contains(t, readWorkflowContent(t, fs), fmt.Sprintf("actions/checkout@%s # v4.1 on %s, TODO: consider using a release", mockHash, today))
+		require.Contains(t, readWorkflowContent(t, fs), fmt.Sprintf("actions/checkout@%s # v4.1 on %s, TODO: use a release instead", mockHash, today))
 	})
 
 	t.Run("unresolved version adds inline todo comment", func(t *testing.T) {
@@ -340,7 +339,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return "", "", errUnresolvedVersion
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		require.Contains(t, readWorkflowContent(t, fs), "actions/checkout@v4 # TODO: use a release instead")
 	})
 
@@ -351,7 +350,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return "", "", errors.New("network failure")
 		})
-		require.Error(t, patchLocalRepositoryFS(t.Context(), fs, PatchOptions{}))
+		require.Error(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 	})
 }
 
