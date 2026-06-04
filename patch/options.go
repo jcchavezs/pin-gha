@@ -53,6 +53,8 @@ type PatchOptions struct {
 	LogHandler slog.Handler
 
 	// OnRepositoryErr is a callback that will be called when an error occurs while processing a repository.
+	// The error returned by this callback will be considered the final error for that repository, and it will be returned by the patching functions.
+	// If this callback is not set, any error will be returned as-is.
 	OnRepositoryErr func(context.Context, string, error) error
 	
 	// OnRepositorySkipped is a callback that will be called when a repository is skipped, with the reason for skipping.
@@ -100,6 +102,7 @@ type LocalPatchOptions struct {
 	// untouched.
 	TrustedOrgs []string
 
+	// LogHandler is a function that retrieves a slog.Handler from the context.
 	LogHandler slog.Handler
 }
 

@@ -82,6 +82,7 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	})
 }
 
+// LocalRepository processes a local repository at the given path. This is used for testing and can also be used by users who want to apply the patch to a local repository without creating a PR.
 func LocalRepository(ctx context.Context, repoPath string, opts LocalPatchOptions) error {
 	opts = opts.withDefaults()
 	return patchLocalRepositoryFS(ctx, slog.New(opts.LogHandler), afero.NewBasePathFs(afero.NewOsFs(), repoPath), opts.TrustedOrgs)
