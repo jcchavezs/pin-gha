@@ -51,7 +51,11 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 		ArchiveCondition: iterator.OmitArchived,
 		SizeCondition:    iterator.NotEmpty,
 	}, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		return patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts)
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
+			return opts.OnRepositoryErr(ctx, repo, err)
+		}
+
+		return nil
 	}, iterator.Options{
 		UseHTTPS:      true,
 		LogHandler:    opts.LogHandler,
@@ -66,7 +70,11 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
 
 	return iterator.RunForRepository(ctx, repo, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		return patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts)
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
+			return opts.OnRepositoryErr(ctx, repo, err)
+		}
+
+		return nil
 	}, iterator.Options{
 		UseHTTPS:      true,
 		LogHandler:    opts.LogHandler,
@@ -182,10 +190,14 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 	return nil
 }
 
+const forkRemoteName = "pin-gha_fork"
+
 // patchRepository is the function that will be called for each repository by the iterator.
 // It applies the patch and creates a PR if there are changes.
 func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
 	if isEmpty {
+		logger.Info("The repository is empty, skipping")
+		opts.OnRepositorySkipped(ctx, repo, SkippedReasonEmptyRepository)
 		return nil
 	}
 
@@ -197,6 +209,8 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 	if err != nil {
 		return err
 	} else if !hasChanges {
+		logger.Info("The workflows are already pinned, skipping")
+		opts.OnRepositorySkipped(ctx, repo, SkippedReasonAlreadyPinned)
 		return nil
 	}
 
@@ -208,32 +222,43 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 		return err
 	}
 
-	if err := github.Commit(ctx, xr, opts.CommitMsg); err != nil {
+	if err := github.Commit(ctx, xr, opts.CommitMsg, "--all"); err != nil {
 		return err
 	}
 
-	if err := github.Push(ctx, xr, opts.TargetBranch, github.PushForce); err != nil {
+	head := opts.TargetBranch
+	if opts.NeedsFork {
+		logger.Debug("Forking repository and adding remote")
+
+		if headFn, err := github.ForkAndAddRemote(ctx, xr, forkRemoteName); err != nil {
+			return err
+		} else {
+			head = headFn(opts.TargetBranch)
+		}
+
+		err = github.PushToRemote(ctx, xr, forkRemoteName, opts.TargetBranch, github.PushForce)
+	}  else {
+		err = github.Push(ctx, xr, opts.TargetBranch, github.PushForce)
+	}
+	if err != nil {
 		return err
 	}
 
 	prURL, _, err := github.CreatePRIfNotExist(ctx, xr, github.PROptions{
 		Title: opts.CommitMsg,
 		Body:  opts.PRBody,
-		Head:  opts.TargetBranch,
+		Head:  head,
 		Draft: opts.PRAsDraft,
 	})
 	if err != nil {
 		return err
 	}
 
-	xr.Log(ctx, slog.LevelDebug, "PR created", "pr_url", prURL)
+	logger.Info("PR created", "url", prURL)
 
-	if opts.OnPRCreated != nil {
-		opts.OnPRCreated(ctx, PRDetails{
-			URL:        prURL,
-			Repository: repo,
-		})
-	}
+	opts.OnPRCreated(ctx, repo, PRDetails{
+		URL:        prURL,
+	})
 
 	return nil
 }

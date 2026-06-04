@@ -12,4 +12,4 @@ var LevelIds = map[slog.Level][]string{
 	slog.LevelError: {"error"},
 }
 
-var loglevel slog.Level = slog.LevelInfo
+var loglevel slog.Level = slog.LevelError
