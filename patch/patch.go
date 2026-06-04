@@ -50,8 +50,14 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 	_, err := iterator.RunForOrganization(ctx, orgName, iterator.SearchOptions{
 		ArchiveCondition: iterator.OmitArchived,
 		SizeCondition:    iterator.NotEmpty,
+		Source:           iterator.OnlyNonForks,
+		Page:             iterator.AllPages,
 	}, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		return patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts)
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
+			return opts.OnRepositoryErr(ctx, repo, err)
+		}
+
+		return nil
 	}, iterator.Options{
 		UseHTTPS:      true,
 		LogHandler:    opts.LogHandler,
@@ -66,7 +72,11 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
 
 	return iterator.RunForRepository(ctx, repo, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		return patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts)
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
+			return opts.OnRepositoryErr(ctx, repo, err)
+		}
+
+		return nil
 	}, iterator.Options{
 		UseHTTPS:      true,
 		LogHandler:    opts.LogHandler,
@@ -74,6 +84,7 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	})
 }
 
+// LocalRepository processes a local repository at the given path. This is used for testing and can also be used by users who want to apply the patch to a local repository without creating a PR.
 func LocalRepository(ctx context.Context, repoPath string, opts LocalPatchOptions) error {
 	opts = opts.withDefaults()
 	return patchLocalRepositoryFS(ctx, slog.New(opts.LogHandler), afero.NewBasePathFs(afero.NewOsFs(), repoPath), opts.TrustedOrgs)
@@ -182,14 +193,23 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 	return nil
 }
 
+const (
+	forkRemoteName = "pin-gha_fork"
+	prSignature    = "\n<!-- PR created with github.com/jcchavezs/pin-gha -->"
+)
+
 // patchRepository is the function that will be called for each repository by the iterator.
 // It applies the patch and creates a PR if there are changes.
 func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
+	rLogger := logger.With("repository", repo)
+	
 	if isEmpty {
+		rLogger.Info("The repository is empty, skipping")
+		opts.OnRepositorySkipped(ctx, repo, SkippedReasonEmptyRepository)
 		return nil
 	}
 
-	if err := patchLocalRepositoryFS(ctx, logger, xr.GenerateFS(), opts.TrustedOrgs); err != nil {
+	if err := patchLocalRepositoryFS(ctx, rLogger, xr.GenerateFS(), opts.TrustedOrgs); err != nil {
 		return err
 	}
 
@@ -197,6 +217,8 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 	if err != nil {
 		return err
 	} else if !hasChanges {
+		rLogger.Info("The workflows are already pinned, skipping")
+		opts.OnRepositorySkipped(ctx, repo, SkippedReasonAlreadyPinned)
 		return nil
 	}
 
@@ -208,32 +230,43 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 		return err
 	}
 
-	if err := github.Commit(ctx, xr, opts.CommitMsg); err != nil {
+	if err := github.Commit(ctx, xr, opts.CommitMsg, "--all"); err != nil {
 		return err
 	}
 
-	if err := github.Push(ctx, xr, opts.TargetBranch, github.PushForce); err != nil {
+	head := opts.TargetBranch
+	if opts.NeedsFork {
+		logger.Debug("Forking repository and adding remote")
+
+		if headFn, err := github.ForkAndAddRemote(ctx, xr, forkRemoteName); err != nil {
+			return err
+		} else {
+			head = headFn(opts.TargetBranch)
+		}
+
+		err = github.PushToRemote(ctx, xr, forkRemoteName, opts.TargetBranch, github.PushForce)
+	}  else {
+		err = github.Push(ctx, xr, opts.TargetBranch, github.PushForce)
+	}
+	if err != nil {
 		return err
 	}
 
 	prURL, _, err := github.CreatePRIfNotExist(ctx, xr, github.PROptions{
 		Title: opts.CommitMsg,
-		Body:  opts.PRBody,
-		Head:  opts.TargetBranch,
+		Body:  opts.PRBody+prSignature,
+		Head:  head,
 		Draft: opts.PRAsDraft,
 	})
 	if err != nil {
 		return err
 	}
 
-	xr.Log(ctx, slog.LevelDebug, "PR created", "pr_url", prURL)
+	logger.Info("PR created", "url", prURL)
 
-	if opts.OnPRCreated != nil {
-		opts.OnPRCreated(ctx, PRDetails{
-			URL:        prURL,
-			Repository: repo,
-		})
-	}
+	opts.OnPRCreated(ctx, repo, PRDetails{
+		URL:        prURL,
+	})
 
 	return nil
 }

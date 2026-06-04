@@ -76,7 +76,7 @@ The `repository` and `organization` subcommands share the following flags:
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
 | `--pr-branch`    | `pin-actions`                                      | Branch name used when creating or updating PRs                                     |
 | `--pr-body-path` | _(built-in template)_                              | Path to a file whose content is used as the PR body                                |
-| `--trusted-orgs` | `atko-cic`                                         | Comma-separated list of GitHub organisations whose actions are left untouched      |
+| `--trusted-org`  |                                                    | Comma-separated list of GitHub organisations whose actions are left untouched      |
 | `--pr-commit-msg`| `chore(security): uses pinned versions of actions` | Commit message used when committing pinned actions                                 |
 
 Global flags:

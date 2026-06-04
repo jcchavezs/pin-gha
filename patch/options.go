@@ -11,7 +11,25 @@ const defaultCommitMsg = "chore(sec|gha): uses pinned versions of github actions
 
 type PRDetails struct {
 	URL        string
-	Repository string
+}
+
+type SkippedReason int
+
+const (
+	SkippedReasonUnknown		 SkippedReason = iota
+	SkippedReasonEmptyRepository
+	SkippedReasonAlreadyPinned
+)
+
+func (r SkippedReason) String() string {
+	switch r {
+	case SkippedReasonEmptyRepository:
+		return "empty repository"
+	case SkippedReasonAlreadyPinned:
+		return "already pinned actions"
+	default:
+		return "unknown reason"
+	}
 }
 
 // PatchOptions controls the behaviour of the patching process.
@@ -23,6 +41,8 @@ type PatchOptions struct {
 	PRBody string
 	// PRAsDraft indicates whether the created PR should be a draft.
 	PRAsDraft bool
+	// NeedsFork indicates whether to fork the repository when creating the PR.
+	NeedsFork      bool
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
 	// untouched.
 	TrustedOrgs []string
@@ -31,9 +51,20 @@ type PatchOptions struct {
 	CommitMsg string
 	// LogHandler is a function that retrieves a slog.Handler from the context.
 	LogHandler slog.Handler
+
+	// OnRepositoryErr is a callback that will be called when an error occurs while processing a repository.
+	// The error returned by this callback will be considered the final error for that repository, and it will be returned by the patching functions.
+	// If this callback is not set, any error will be returned as-is.
+	OnRepositoryErr func(context.Context, string, error) error
+	
+	// OnRepositorySkipped is a callback that will be called when a repository is skipped, with the reason for skipping.
+	OnRepositorySkipped func(context.Context, string, SkippedReason)
+
 	// OnPRCreated is a callback that will be called when a PR is created.
-	OnPRCreated func(context.Context, PRDetails)
+	OnPRCreated func(context.Context, string, PRDetails)
 }
+
+const defaultPRBody = `This pull request updates the GitHub Actions workflow files to use pinned commit SHAs for all third-party actions, improving security and reproducibility.`
 
 func (o PatchOptions) withDefaults() PatchOptions {
 	if o.TargetBranch == "" {
@@ -44,11 +75,23 @@ func (o PatchOptions) withDefaults() PatchOptions {
 	}
 
 	if o.PRBody == "" {
-		o.PRBody = o.CommitMsg
+		o.PRBody = defaultPRBody
 	}
 
 	if o.LogHandler == nil {
 		o.LogHandler = slog.Default().Handler()
+	}
+
+	if o.OnRepositoryErr == nil {
+		o.OnRepositoryErr = func(_ context.Context, _ string, err error) error { return err }
+	}
+
+	if o.OnRepositorySkipped == nil {
+		o.OnRepositorySkipped = func(context.Context, string, SkippedReason) {}
+	}
+
+	if o.OnPRCreated == nil {
+		o.OnPRCreated = func(context.Context, string, PRDetails) {}
 	}
 
 	return o
@@ -59,6 +102,7 @@ type LocalPatchOptions struct {
 	// untouched.
 	TrustedOrgs []string
 
+	// LogHandler is a function that retrieves a slog.Handler from the context.
 	LogHandler slog.Handler
 }
 

@@ -10,7 +10,6 @@ import (
 
 	"github.com/jcchavezs/pin-gha/patch"
 	"github.com/spf13/cobra"
-	"github.com/thediveo/enumflag/v2"
 )
 
 var rootCmd = &cobra.Command{
@@ -25,14 +24,6 @@ var rootCmd = &cobra.Command{
 	},
 	SilenceUsage:  false,
 	SilenceErrors: true,
-}
-
-var patchFlags struct {
-	prBranch      string
-	prTitle       string
-	prBodyPath    string
-	prCommitMsg   string
-	prTrustedOrgs []string
 }
 
 func getPRBodyFromPath(path string) (string, error) {
@@ -65,8 +56,12 @@ var repositoryCmd = &cobra.Command{
 			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
-			OnPRCreated: func(ctx context.Context, p patch.PRDetails) {
-				cmd.Printf("PR created: %s\n", p.URL)
+			NeedsFork:    patchFlags.prFork,
+			OnRepositorySkipped: func(ctx context.Context, repo string, reason patch.SkippedReason) {
+				cmd.Printf("Repository %q skipped: %s\n", repo, reason.String())
+			},
+			OnPRCreated: func(ctx context.Context, repo string, p patch.PRDetails) {
+				cmd.Printf("PR created for repository %q: %s\n", repo, p.URL)
 			},
 		})
 	},
@@ -89,8 +84,16 @@ var organizationCmd = &cobra.Command{
 			PRBody:       prBody,
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
-			OnPRCreated: func(ctx context.Context, p patch.PRDetails) {
-				cmd.Printf("PR created: %s\n", p.URL)
+			NeedsFork:    patchFlags.prFork,
+			OnRepositoryErr: func(ctx context.Context, repo string, err error) error {
+				cmd.Printf("Error processing repository %q: %v\n", repo, err)
+				return nil
+			},
+			OnRepositorySkipped: func(ctx context.Context, repo string, reason patch.SkippedReason) {
+				cmd.Printf("Repository %q skipped: %s\n", repo, reason.String())
+			},
+			OnPRCreated: func(ctx context.Context, repo string, p patch.PRDetails) {
+				cmd.Printf("PR created for repository %q: %s\n", repo, p.URL)
 			},
 		})
 	},
@@ -121,26 +124,6 @@ var localRepositoryCmd = &cobra.Command{
 
 		return patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{})
 	},
-}
-
-func init() {
-	rootCmd.PersistentFlags().Var(
-		enumflag.New(&loglevel, "string", LevelIds, enumflag.EnumCaseInsensitive),
-		"log-level",
-		"Sets the log level",
-	)
-
-	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd, localRepositoryCmd)
-
-	repositoryCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-actions", "Branch name used when creating or updating PRs")
-	repositoryCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")
-	repositoryCmd.Flags().StringSliceVar(&patchFlags.prTrustedOrgs, "trusted-orgs", []string{"atko-cic"}, "Comma-separated list of GitHub organisations whose actions are left untouched")
-	repositoryCmd.Flags().StringVar(&patchFlags.prCommitMsg, "pr-commit-msg", "chore(security): uses pinned versions of actions", "Commit message used when committing the pinned actions")
-
-	organizationCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-actions", "Branch name used when creating or updating PRs")
-	organizationCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")
-	organizationCmd.Flags().StringSliceVar(&patchFlags.prTrustedOrgs, "trusted-orgs", []string{"atko-cic"}, "Comma-separated list of GitHub organisations whose actions are left untouched")
-	organizationCmd.Flags().StringVar(&patchFlags.prCommitMsg, "pr-commit-msg", "chore(security): uses pinned versions of actions", "Commit message used when committing the pinned actions")
 }
 
 func main() {

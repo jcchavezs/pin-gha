@@ -83,7 +83,7 @@ func TestPatchRepository_NoChanges(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
 }
 
 // TestPatchRepository_HasChanges_NewPR verifies the happy path: when HasChanges
@@ -186,7 +186,7 @@ func TestPatchRepository_HasChanges_PRAlreadyExists(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
 }
 
 // TestPatchRepository_HasChangesError verifies that an error from HasChanges
@@ -203,7 +203,7 @@ func TestPatchRepository_HasChangesError(t *testing.T) {
 		},
 	}
 
-	require.Error(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}))
+	require.Error(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
 }
 
 // ---- helpers for patchLocalRepositoryFS tests ----
