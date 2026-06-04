@@ -50,6 +50,8 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 	_, err := iterator.RunForOrganization(ctx, orgName, iterator.SearchOptions{
 		ArchiveCondition: iterator.OmitArchived,
 		SizeCondition:    iterator.NotEmpty,
+		Source:           iterator.OnlyNonForks,
+		Page:             iterator.AllPages,
 	}, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
 		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
 			return opts.OnRepositoryErr(ctx, repo, err)
