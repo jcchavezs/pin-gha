@@ -191,18 +191,23 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 	return nil
 }
 
-const forkRemoteName = "pin-gha_fork"
+const (
+	forkRemoteName = "pin-gha_fork"
+	prSignature    = "\n<!-- PR created with github.com/jcchavezs/pin-gha -->"
+)
 
 // patchRepository is the function that will be called for each repository by the iterator.
 // It applies the patch and creates a PR if there are changes.
 func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
+	rLogger := logger.With("repository", repo)
+	
 	if isEmpty {
-		logger.Info("The repository is empty, skipping")
+		rLogger.Info("The repository is empty, skipping")
 		opts.OnRepositorySkipped(ctx, repo, SkippedReasonEmptyRepository)
 		return nil
 	}
 
-	if err := patchLocalRepositoryFS(ctx, logger, xr.GenerateFS(), opts.TrustedOrgs); err != nil {
+	if err := patchLocalRepositoryFS(ctx, rLogger, xr.GenerateFS(), opts.TrustedOrgs); err != nil {
 		return err
 	}
 
@@ -210,7 +215,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 	if err != nil {
 		return err
 	} else if !hasChanges {
-		logger.Info("The workflows are already pinned, skipping")
+		rLogger.Info("The workflows are already pinned, skipping")
 		opts.OnRepositorySkipped(ctx, repo, SkippedReasonAlreadyPinned)
 		return nil
 	}
@@ -247,7 +252,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 
 	prURL, _, err := github.CreatePRIfNotExist(ctx, xr, github.PROptions{
 		Title: opts.CommitMsg,
-		Body:  opts.PRBody,
+		Body:  opts.PRBody+prSignature,
 		Head:  head,
 		Draft: opts.PRAsDraft,
 	})
