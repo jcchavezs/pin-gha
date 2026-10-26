@@ -1,0 +1,54 @@
+# github.com/alexellis/go-execute/v2 v2.2.1
+## explicit; go 1.20
+github.com/alexellis/go-execute/v2
+# github.com/davecgh/go-spew v1.1.1
+## explicit
+github.com/davecgh/go-spew/spew
+# github.com/inconshreveable/mousetrap v1.1.0
+## explicit; go 1.18
+github.com/inconshreveable/mousetrap
+# github.com/jcchavezs/gh-iterator v0.8.1
+## explicit; go 1.24.0
+github.com/jcchavezs/gh-iterator
+github.com/jcchavezs/gh-iterator/exec
+github.com/jcchavezs/gh-iterator/exec/mock
+github.com/jcchavezs/gh-iterator/github
+github.com/jcchavezs/gh-iterator/internal/log
+# github.com/pmezard/go-difflib v1.0.0
+## explicit
+github.com/pmezard/go-difflib/difflib
+# github.com/spf13/afero v1.15.0
+## explicit; go 1.23.0
+github.com/spf13/afero
+github.com/spf13/afero/internal/common
+github.com/spf13/afero/mem
+# github.com/spf13/cobra v1.10.2
+## explicit; go 1.15
+github.com/spf13/cobra
+# github.com/spf13/pflag v1.0.9
+## explicit; go 1.12
+github.com/spf13/pflag
+# github.com/stretchr/testify v1.11.1
+## explicit; go 1.17
+github.com/stretchr/testify/assert
+github.com/stretchr/testify/assert/yaml
+github.com/stretchr/testify/require
+# github.com/thediveo/enumflag/v2 v2.1.0
+## explicit; go 1.23.0
+github.com/thediveo/enumflag/v2
+# golang.org/x/sys v0.49.0
+## explicit; go 1.26.0
+golang.org/x/sys/plan9
+golang.org/x/sys/unix
+golang.org/x/sys/windows
+# golang.org/x/term v0.47.0
+## explicit; go 1.26.0
+golang.org/x/term
+# golang.org/x/text v0.43.0
+## explicit; go 1.26.0
+golang.org/x/text/runes
+golang.org/x/text/transform
+golang.org/x/text/unicode/norm
+# gopkg.in/yaml.v3 v3.0.1
+## explicit
+gopkg.in/yaml.v3
