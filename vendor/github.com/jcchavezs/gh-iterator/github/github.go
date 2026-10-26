@@ -1,0 +1,391 @@
+package github
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"slices"
+	"strings"
+
+	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
+	"github.com/jcchavezs/gh-iterator/internal/log"
+)
+
+type ghErrResponse struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+func (r ghErrResponse) Error() string {
+	return fmt.Sprintf("%s with status %s", strings.ToLower(r.Message), r.Status)
+}
+
+// ErrOrGHAPIErr unmarshals the response payload and if it success return the GH API error,
+// otherwise returns the generic error.
+func ErrOrGHAPIErr(apiResponsePayload string, err error) error {
+	if len(apiResponsePayload) > 0 {
+		var errRes ghErrResponse
+		if dErr := json.NewDecoder(strings.NewReader(apiResponsePayload)).Decode(&errRes); dErr == nil {
+			return errRes
+		}
+	}
+
+	return err
+}
+
+func wrapErrIfNotNil(message string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	return fmt.Errorf(message, err)
+}
+
+// CurrentBranch returns the current branch
+func CurrentBranch(ctx context.Context, xr iteratorexec.Execer) (string, error) {
+	res, err := xr.RunX(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	return strings.TrimSpace(res), wrapErrIfNotNil("creating branch: %w", err)
+}
+
+// Checks out a new branch
+func CheckoutNewBranch(ctx context.Context, xr iteratorexec.Execer, name string) error {
+	_, err := xr.RunX(ctx, "git", "checkout", "-b", name)
+	return wrapErrIfNotNil("creating branch: %w", err)
+}
+
+// AddsFiles content to the index
+func AddFiles(ctx context.Context, xr iteratorexec.Execer, paths ...string) error {
+	var (
+		command string
+		args    []string
+	)
+
+	if slices.ContainsFunc(paths, func(p string) bool { return strings.Contains(p, "*") }) {
+		command = os.Getenv("SHELL")
+		if command == "" {
+			command = "/bin/sh"
+		}
+
+		log.FromCtx(ctx).Debug("Using shell to resolve globs", "shell", command)
+
+		args = []string{"-c", fmt.Sprintf("git add %s", strings.Join(paths, " "))}
+	} else {
+		command = "git"
+		args = append([]string{"add"}, paths...)
+	}
+
+	if _, err := xr.RunX(ctx, command, args...); err != nil {
+		return fmt.Errorf("adding files: %w", err)
+	}
+
+	return nil
+}
+
+// HasChanges returns true if files are changed in the working tree status
+func HasChanges(ctx context.Context, xr iteratorexec.Execer) (bool, error) {
+	res, err := xr.Run(ctx, "git", "status", "-s")
+	if err != nil {
+		return false, fmt.Errorf("checking changes: %w", err)
+	}
+
+	return len(res.TrimStdout()) > 0, nil
+}
+
+// ListChanges return a list of changes in the working tree status
+func ListChanges(ctx context.Context, xr iteratorexec.Execer) ([][2]string, error) {
+	res, err := xr.Run(ctx, "git", "status", "-s")
+	if err != nil {
+		return nil, fmt.Errorf("listing changes: %w", err)
+	}
+
+	changes := [][2]string{}
+
+	scanner := bufio.NewScanner(strings.NewReader(res.TrimStdout()))
+	for scanner.Scan() {
+		if l := scanner.Text(); len(l) > 0 {
+			t, file, _ := strings.Cut(l, " ")
+			changes = append(changes, [2]string{t, file})
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("listing changes: %w", err)
+	}
+
+	return changes, nil
+}
+
+// Commit records changes to the repository
+func Commit(ctx context.Context, xr iteratorexec.Execer, message string, flags ...string) error {
+	args := append([]string{"commit", "-m", message}, flags...)
+	_, err := xr.RunX(ctx, "git", args...)
+	return wrapErrIfNotNil("commiting changes: %w", err)
+}
+
+// PushOption represents the options for pushing changes to the remote repository.
+type PushOption bool
+
+const (
+	PushForce   PushOption = true
+	PushNoForce PushOption = false
+)
+
+// Push updates remote refs along with associated objects
+func Push(ctx context.Context, xr iteratorexec.Execer, branchName string, force PushOption) error {
+	return PushToRemote(ctx, xr, "origin", branchName, force)
+}
+
+// PushToRemote updates remote refs along with associated objects
+func PushToRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string, branchName string, force PushOption) error {
+	args := []string{"push"}
+	if force {
+		args = append(args, "--force")
+	}
+	if branchName != "" {
+		args = append(args, remoteName, branchName)
+	}
+
+	_, err := xr.RunX(ctx, "git", args...)
+	return wrapErrIfNotNil("pushing changes: %w", err)
+}
+
+// PROptions contains the options for creating a pull request. It is used in CreatePRIfNotExist.
+type PROptions struct {
+	// Title for the pull request
+	Title string
+	// Body for the pull request
+	Body string
+	// Draft will open the pull request as draft when true
+	Draft bool
+	// The branch that contains commits for your pull request
+	Head string
+	// Assignees' logins for the pull request. If the PR already exists, the assignees will be added to the existing ones.
+	Assignees []string
+}
+
+const prBodyMaxLen = 5000 // arbitrary but I think it is enough
+
+// CreatePRIfNotExist on GitHub and returns:
+// - The PR URL
+// - Whether the PR is new or not
+// - An error if occurred.
+func CreatePRIfNotExist(ctx context.Context, xr iteratorexec.Execer, opts PROptions) (string, bool, error) {
+	var prBodyFile string
+
+	if len(opts.Body) > 0 {
+		body := opts.Body
+		if len(body) > prBodyMaxLen {
+			body = body[:prBodyMaxLen]
+		}
+
+		if f, err := os.CreateTemp(os.TempDir(), "pr-body"); err != nil {
+			return "", false, fmt.Errorf("creating PR body file: %w", err)
+		} else {
+			_, _ = f.WriteString(body)
+			_ = f.Close()
+			prBodyFile = f.Name()
+			defer os.Remove(prBodyFile) //nolint:errcheck
+		}
+	}
+
+	var (
+		prURL              string
+		isNewPR            bool
+		isDraft            bool
+		currentPRAssignees []string
+	)
+
+	// Passing the head ref to check if the PR exists. This is necessary when
+	// we are checking PRs from forks.
+	prViewArgs := []string{"pr", "view"}
+	if opts.Head != "" {
+		prViewArgs = append(prViewArgs, opts.Head)
+	}
+	prViewArgs = append(prViewArgs, "--json", "url,state,isDraft")
+
+	if res, err := xr.Run(ctx, "gh", prViewArgs...); err != nil {
+		return "", false, fmt.Errorf("checking existing PR: %w", err)
+	} else if res.ExitCode == 0 {
+		// PR exists
+		var pr struct {
+			URL       string `json:"url"`
+			State     string `json:"state"`
+			IsDraft   bool   `json:"isDraft"`
+			Assignees []struct {
+				Login string `json:"login"`
+			} `json:"assignees"`
+		}
+
+		if err := json.NewDecoder(strings.NewReader(res.Stdout)).Decode(&pr); err != nil {
+			return "", false, fmt.Errorf("unmarshaling existing PR: %w", err)
+		}
+
+		isDraft = pr.IsDraft
+		if len(pr.Assignees) > 0 {
+			currentPRAssignees = make([]string, len(pr.Assignees))
+			for i, a := range pr.Assignees {
+				currentPRAssignees[i] = a.Login
+			}
+		}
+
+		if pr.State != "CLOSED" && pr.State != "MERGED" {
+			// PR is not closed
+			prURL = pr.URL
+		}
+	}
+
+	if prURL == "" {
+		// non Closed PR does not exist
+		createPRArgs := []string{"pr", "create"}
+		if prBodyFile != "" {
+			createPRArgs = append(createPRArgs, "--body-file", prBodyFile)
+		}
+		if opts.Draft {
+			createPRArgs = append(createPRArgs, "--draft")
+		}
+		if opts.Title != "" {
+			createPRArgs = append(createPRArgs, "--title", opts.Title)
+		}
+		if opts.Head != "" {
+			createPRArgs = append(createPRArgs, "--head", opts.Head)
+		}
+
+		if prBodyFile == "" || opts.Title == "" {
+			createPRArgs = append(createPRArgs, "--fill")
+		}
+		if len(opts.Assignees) > 0 {
+			for _, assignee := range opts.Assignees {
+				createPRArgs = append(createPRArgs, "--assignee", assignee)
+			}
+		}
+
+		res, err := xr.RunX(ctx, "gh", createPRArgs...)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to create PR: %w", ErrOrGHAPIErr(res, err))
+		}
+
+		prURL = strings.TrimSpace(res)
+		isNewPR = true
+
+		xr.Log(ctx, slog.LevelInfo, "PR created", "pr_url", prURL)
+	} else {
+		xr.Log(ctx, slog.LevelInfo, "PR already exists", "pr_url", prURL)
+
+		editPRArgs := []string{"pr", "edit", prURL}
+		if prBodyFile != "" {
+			editPRArgs = append(editPRArgs, "--body-file", prBodyFile)
+		}
+
+		if opts.Title != "" {
+			editPRArgs = append(editPRArgs, "--title", opts.Title)
+		}
+
+		if len(opts.Assignees) > 0 {
+			for _, assignee := range opts.Assignees {
+				if !slices.Contains(currentPRAssignees, assignee) {
+					editPRArgs = append(editPRArgs, "--add-assignee", assignee)
+				}
+			}
+		}
+
+		res, err := xr.RunX(ctx, "gh", editPRArgs...)
+		if err != nil {
+			return "", false, fmt.Errorf("failed to update PR: %w", ErrOrGHAPIErr(res, err))
+		}
+
+		if isDraft != opts.Draft {
+			toggleDraftArgs := []string{"pr", "ready", prURL}
+			if isDraft {
+				xr.Log(ctx, slog.LevelInfo, "Marking PR as ready for review")
+			} else {
+				xr.Log(ctx, slog.LevelInfo, "Marking PR as draft")
+				toggleDraftArgs = append(toggleDraftArgs, "--undo")
+			}
+
+			if _, err := xr.RunX(ctx, "gh", toggleDraftArgs...); err != nil {
+				return "", false, fmt.Errorf("failed to toggle draft status: %w", ErrOrGHAPIErr(res, err))
+			}
+		}
+	}
+
+	return prURL, isNewPR, nil
+}
+
+// ForkAndAddRemote a repository and add the remote to the local git config.
+// It returns a function that given a branch name returns the head reference
+// to be used in the PR creation (i.e., username:branchName).
+// Important: if you name the remote as 'upstream', gh CLI might get confused when creating PRs.
+func ForkAndAddRemote(ctx context.Context, xr iteratorexec.Execer, remoteName string) (func(branchName string) string, error) {
+	username, err := getCurrentUser(ctx, xr)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = xr.RunX(ctx, "gh", "repo", "fork", "--remote", "--remote-name", remoteName)
+	if err != nil {
+		return nil, fmt.Errorf("forking repository and adding remote: %w", err)
+	}
+
+	return func(branchName string) string {
+		return fmt.Sprintf("%s:%s", username, branchName)
+	}, nil
+}
+
+func getCurrentUser(ctx context.Context, xr iteratorexec.Execer) (string, error) {
+	res, err := iteratorexec.TrimStdout(xr.RunX(ctx, "gh", "api", "user", "--jq", ".login"))
+	if err != nil {
+		return "", fmt.Errorf("getting current user: %w", err)
+	}
+
+	return res, nil
+}
+
+type ghAPIErrorResponse struct {
+	Message string `json:"message"`
+	Status  string `json:"status"`
+}
+
+// IsRepositoryArchived checks if the repository is archived by querying the GitHub API.
+func IsRepositoryArchived(ctx context.Context, repoName string, xr iteratorexec.Execer) (bool, error) {
+	xr.Log(ctx, slog.LevelDebug, "Checking if repository is archived")
+
+	res, err := xr.RunX(ctx, "gh", "api",
+		fmt.Sprintf("/repos/%s", repoName),
+		"-H", "Accept: application/vnd.github+json",
+		"--jq", ".archived")
+	if err == nil {
+		return strings.Contains(res, "true"), nil
+	}
+
+	var errResponse ghAPIErrorResponse
+	if err := json.Unmarshal([]byte(res), &errResponse); err == nil {
+		return false, fmt.Errorf("checking if repository is archived: %s", errResponse.Message)
+	}
+
+	return false, fmt.Errorf("checking if repository is archived: %w", err)
+}
+
+func ReadFile(ctx context.Context, xr iteratorexec.Execer, repo string, filePath string) ([]byte, error) {
+	out, err := xr.RunX(ctx, "gh", "api",
+		fmt.Sprintf("/repos/%s/contents/%s", repo, filePath),
+		"-H", "Accept: application/vnd.github.raw+json",
+	)
+
+	if err == nil {
+		return []byte(out), nil
+	}
+
+	var errResponse ghErrResponse
+	if err := json.Unmarshal([]byte(out), &errResponse); err == nil {
+		if errResponse.Status == "404" {
+			return nil, fmt.Errorf("reading file %q: %w", filePath, os.ErrNotExist)
+		}
+
+		return nil, fmt.Errorf("reading file %q: %s", filePath, errResponse.Message)
+	}
+
+	return nil, fmt.Errorf("reading file %q: %w", filePath, err)
+}
