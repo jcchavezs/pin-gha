@@ -1,7 +1,6 @@
 package patch
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -71,7 +71,7 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
 
-	return iterator.RunForRepository(ctx, repo, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
+	return iterator.RunForRepository(ctx, normalizeRepositoryName(repo), func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
 		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
 			return opts.OnRepositoryErr(ctx, repo, err)
 		}
@@ -82,6 +82,10 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 		LogHandler:    opts.LogHandler,
 		CloningSubset: []string{".github/workflows"},
 	})
+}
+
+func normalizeRepositoryName(repo string) string {
+	return strings.TrimPrefix(repo, "https://github.com/")
 }
 
 // LocalRepository processes a local repository at the given path. This is used for testing and can also be used by users who want to apply the patch to a local repository without creating a PR.
@@ -180,7 +184,7 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 					return fmt.Errorf("getting commit hash: %v", err)
 				}
 
-				wfb = bytes.ReplaceAll(wfb, []byte(uses), []byte(newUses))
+				wfb = replaceUses(wfb, uses, newUses)
 			}
 		}
 
@@ -193,6 +197,23 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 	return nil
 }
 
+// replaceUses replaces only the occurrences of uses that are a whole value, so
+// "actions/checkout@v4" does not match inside "actions/checkout@v4.1.0" or
+// "other-actions/checkout@v4".
+func replaceUses(content []byte, uses, newUses string) []byte {
+	re := regexp.MustCompile(`(^|[\s"'])` + regexp.QuoteMeta(uses) + `($|[\s"'])`)
+	// The comment goes after the closing quote, otherwise it becomes part of the value.
+	value, comment, hasComment := strings.Cut(newUses, " # ")
+	return re.ReplaceAllFunc(content, func(match []byte) []byte {
+		sub := re.FindSubmatch(match)
+		lead, trail := sub[1], sub[2]
+		if hasComment && (string(trail) == `"` || string(trail) == "'") {
+			return []byte(string(lead) + value + string(trail) + " # " + comment)
+		}
+		return []byte(string(lead) + newUses + string(trail))
+	})
+}
+
 const (
 	forkRemoteName = "pin-gha_fork"
 	prSignature    = "\n<!-- PR created with github.com/jcchavezs/pin-gha -->"
@@ -202,7 +223,7 @@ const (
 // It applies the patch and creates a PR if there are changes.
 func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
 	rLogger := logger.With("repository", repo)
-	
+
 	if isEmpty {
 		rLogger.Info("The repository is empty, skipping")
 		opts.OnRepositorySkipped(ctx, repo, SkippedReasonEmptyRepository)
@@ -240,7 +261,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 
 		if headFn, err := github.ForkAndAddRemote(ctx, xr, forkRemoteName); err != nil {
 			return err
-		} else {
+		}  else {
 			head = headFn(opts.TargetBranch)
 		}
 

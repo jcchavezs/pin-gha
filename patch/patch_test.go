@@ -86,6 +86,23 @@ func TestPatchRepository_NoChanges(t *testing.T) {
 	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
 }
 
+func TestNormalizeRepositoryName(t *testing.T) {
+	tests := []struct {
+		name string
+		repo string
+		want string
+	}{
+		{name: "owner and name", repo: "org/repo", want: "org/repo"},
+		{name: "GitHub URL", repo: "https://github.com/org/repo", want: "org/repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, normalizeRepositoryName(tt.repo))
+		})
+	}
+}
+
 // TestPatchRepository_HasChanges_NewPR verifies the happy path: when HasChanges
 // returns true and no existing open PR exists, patchRepository creates the branch,
 // stages changes, commits, pushes, and opens a new PR.
@@ -352,6 +369,55 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		})
 		require.Error(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 	})
+}
+
+func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
+	// The result must not depend on which of the two steps is processed first.
+	// Steps of a single job are ordered, unlike jobs which are a map.
+	for name, content := range map[string]string{
+		"short version first": "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/checkout@v4.1.0\n",
+		"long version first":  "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4.1.0\n      - uses: actions/checkout@v4\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+			setupWorkflow(t, fs, content)
+			withMockResolver(t, func(_ context.Context, _, version string) (string, string, error) {
+				if version == "v4" {
+					return "1111111111111111111111111111111111111111", "v4.2.0", nil
+				}
+				return "2222222222222222222222222222222222222222", version, nil
+			})
+
+			require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+
+			got := readWorkflowContent(t, fs)
+			require.Contains(t, got, "actions/checkout@1111111111111111111111111111111111111111 # v4.2.0\n")
+			require.Contains(t, got, "actions/checkout@2222222222222222222222222222222222222222 # v4.1.0\n")
+			require.NotContains(t, got, "v4.2.0.1.0")
+		})
+	}
+
+	t.Run("does not touch an action whose name ends with the same text", func(t *testing.T) {
+		fs := afero.NewMemMapFs()
+		setupWorkflow(t, fs, "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: other-actions/checkout@v4\n")
+		withMockResolver(t, func(_ context.Context, action, _ string) (string, string, error) {
+			if action == "actions/checkout" {
+				return "1111111111111111111111111111111111111111", "v4.2.0", nil
+			}
+			return "2222222222222222222222222222222222222222", "v4.3.0", nil
+		})
+
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+
+		got := readWorkflowContent(t, fs)
+		require.Contains(t, got, "- uses: actions/checkout@1111111111111111111111111111111111111111 # v4.2.0\n")
+		require.Contains(t, got, "- uses: other-actions/checkout@2222222222222222222222222222222222222222 # v4.3.0\n")
+	})
+}
+
+func TestReplaceUsesQuoted(t *testing.T) {
+	got := replaceUses([]byte("- uses: \"actions/checkout@v4\"\n- uses: 'actions/checkout@v4'\n"), "actions/checkout@v4", "actions/checkout@abc # v4.2.0")
+	require.Equal(t, "- uses: \"actions/checkout@abc\" # v4.2.0\n- uses: 'actions/checkout@abc' # v4.2.0\n", string(got))
 }
 
 func TestResolveCommitHashWithExecer(t *testing.T) {
