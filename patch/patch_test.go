@@ -86,6 +86,23 @@ func TestPatchRepository_NoChanges(t *testing.T) {
 	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
 }
 
+func TestNormalizeRepositoryName(t *testing.T) {
+	tests := []struct {
+		name string
+		repo string
+		want string
+	}{
+		{name: "owner and name", repo: "org/repo", want: "org/repo"},
+		{name: "GitHub URL", repo: "https://github.com/org/repo", want: "org/repo"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, normalizeRepositoryName(tt.repo))
+		})
+	}
+}
+
 // TestPatchRepository_HasChanges_NewPR verifies the happy path: when HasChanges
 // returns true and no existing open PR exists, patchRepository creates the branch,
 // stages changes, commits, pushes, and opens a new PR.

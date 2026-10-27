@@ -32,6 +32,7 @@ go install github.com/jcchavezs/pin-gha/cmd/pin-gha@latest
 ### Pin a single remote repository
 
 Clones the repository, pins all unpinned actions, and opens a PR with the changes.
+The repository can be specified as `<owner>/<repo>` or as a full GitHub URL.
 
 ```sh
 pin-gha repository <owner/repo>
