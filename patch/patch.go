@@ -249,7 +249,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 		}
 
 		err = github.PushToRemote(ctx, xr, forkRemoteName, opts.TargetBranch, github.PushForce)
-	} else {
+	}  else {
 		err = github.Push(ctx, xr, opts.TargetBranch, github.PushForce)
 	}
 	if err != nil {
