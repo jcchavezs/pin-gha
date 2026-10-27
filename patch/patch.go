@@ -1,7 +1,6 @@
 package patch
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -180,7 +180,7 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 					return fmt.Errorf("getting commit hash: %v", err)
 				}
 
-				wfb = bytes.ReplaceAll(wfb, []byte(uses), []byte(newUses))
+				wfb = replaceUses(wfb, uses, newUses)
 			}
 		}
 
@@ -191,6 +191,15 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 	}
 
 	return nil
+}
+
+// replaceUses replaces only the occurrences of uses that are a whole value, so
+// "actions/checkout@v4" does not match inside "actions/checkout@v4.1.0" or
+// "other-actions/checkout@v4".
+func replaceUses(content []byte, uses, newUses string) []byte {
+	re := regexp.MustCompile(`(^|[\s"'])` + regexp.QuoteMeta(uses) + `($|[\s"'])`)
+	replacement := strings.ReplaceAll(newUses, "$", "$$")
+	return re.ReplaceAll(content, []byte("${1}"+replacement+"${2}"))
 }
 
 const (
