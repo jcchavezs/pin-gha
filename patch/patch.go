@@ -244,7 +244,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 
 		if headFn, err := github.ForkAndAddRemote(ctx, xr, forkRemoteName); err != nil {
 			return err
-		} else {
+		}  else {
 			head = headFn(opts.TargetBranch)
 		}
 
@@ -258,7 +258,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 
 	prURL, _, err := github.CreatePRIfNotExist(ctx, xr, github.PROptions{
 		Title: opts.CommitMsg,
-		Body:  opts.PRBody + prSignature,
+		Body:  opts.PRBody+prSignature,
 		Head:  head,
 		Draft: opts.PRAsDraft,
 	})
@@ -269,7 +269,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 	logger.Info("PR created", "url", prURL)
 
 	opts.OnPRCreated(ctx, repo, PRDetails{
-		URL: prURL,
+		URL:        prURL,
 	})
 
 	return nil
