@@ -354,6 +354,95 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 	})
 }
 
+func TestPatchLocalRepositoryFSVersionAlignment(t *testing.T) {
+	tests := []struct {
+		name                string
+		majorVersionAlign   bool
+		allVersionAlign     bool
+		secondVersion       string
+		thirdVersion        string
+		expectedSecondHash  string
+		expectedSecondLabel string
+		expectedThirdHash   string
+		expectedThirdLabel  string
+	}{
+		{
+			name:                "aligns versions within a major",
+			majorVersionAlign:   true,
+			secondVersion:       "v4.1.0",
+			thirdVersion:        "v3.9.9",
+			expectedSecondHash:  "2222222222222222222222222222222222222222",
+			expectedSecondLabel: "v4.2.0",
+			expectedThirdHash:   "3333333333333333333333333333333333333333",
+			expectedThirdLabel:  "v3.9.9",
+		},
+		{
+			name:                "aligns versions across all majors",
+			allVersionAlign:     true,
+			secondVersion:       "v4.2.0",
+			thirdVersion:        "v3.9.9",
+			expectedSecondHash:  "2222222222222222222222222222222222222222",
+			expectedSecondLabel: "v4.2.0",
+			expectedThirdHash:   "2222222222222222222222222222222222222222",
+			expectedThirdLabel:  "v4.2.0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+			require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
+			require.NoError(t, afero.WriteFile(fs, ".github/workflows/first.yml", []byte("jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.2.0\n"), 0644))
+			require.NoError(t, afero.WriteFile(fs, ".github/workflows/second.yml", []byte(fmt.Sprintf("jobs:\n  build:\n    steps:\n      - uses: actions/checkout@%s\n", tt.secondVersion)), 0644))
+			require.NoError(t, afero.WriteFile(fs, ".github/workflows/third.yml", []byte(fmt.Sprintf("jobs:\n  build:\n    steps:\n      - uses: actions/checkout@%s\n", tt.thirdVersion)), 0644))
+
+			withMockResolver(t, func(_ context.Context, action, version string) (string, string, error) {
+				require.Equal(t, "actions/checkout", action)
+				switch version {
+				case "v4.2.0":
+					return "2222222222222222222222222222222222222222", version, nil
+				case "v4.1.0":
+					return "1111111111111111111111111111111111111111", version, nil
+				case "v3.9.9":
+					return "3333333333333333333333333333333333333333", version, nil
+				default:
+					return "", "", fmt.Errorf("unexpected version: %s", version)
+				}
+			})
+
+			err := patchLocalRepositoryFSWithAlignment(t.Context(), slog.New(slog.DiscardHandler), fs, nil, tt.majorVersionAlign, tt.allVersionAlign)
+			require.NoError(t, err)
+
+			for _, name := range []string{"first.yml", "second.yml"} {
+				content, err := afero.ReadFile(fs, fmt.Sprintf(".github/workflows/%s", name))
+				require.NoError(t, err)
+				require.Contains(t, string(content), fmt.Sprintf("actions/checkout@%s # %s", tt.expectedSecondHash, tt.expectedSecondLabel))
+			}
+			third, err := afero.ReadFile(fs, ".github/workflows/third.yml")
+			require.NoError(t, err)
+			require.Contains(t, string(third), fmt.Sprintf("actions/checkout@%s # %s", tt.expectedThirdHash, tt.expectedThirdLabel))
+		})
+	}
+
+	t.Run("alignment flags are mutually exclusive", func(t *testing.T) {
+		err := patchLocalRepositoryFSWithAlignment(t.Context(), slog.New(slog.DiscardHandler), afero.NewMemMapFs(), nil, true, true)
+		require.ErrorContains(t, err, "mutually exclusive")
+	})
+
+	t.Run("branch references remain pinned with major alignment", func(t *testing.T) {
+		fs := afero.NewMemMapFs()
+		const content = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@main\n"
+		setupWorkflow(t, fs, content)
+		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
+			return mockHash, "main", nil
+		})
+
+		require.NoError(t, patchLocalRepositoryFSWithAlignment(t.Context(), slog.New(slog.DiscardHandler), fs, nil, true, false))
+		today := time.Now().Format("2006-01-02")
+		require.Contains(t, readWorkflowContent(t, fs), fmt.Sprintf("actions/checkout@%s # main on %s, TODO: use a release instead", mockHash, today))
+	})
+}
+
 func TestResolveCommitHashWithExecer(t *testing.T) {
 	t.Run("fetch tags fails returns error", func(t *testing.T) {
 		xr := mock.Execer{
