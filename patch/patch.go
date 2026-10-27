@@ -71,7 +71,7 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
 
-	return iterator.RunForRepository(ctx, repo, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
+	return iterator.RunForRepository(ctx, normalizeRepositoryName(repo), func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
 		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
 			return opts.OnRepositoryErr(ctx, repo, err)
 		}
@@ -82,6 +82,10 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 		LogHandler:    opts.LogHandler,
 		CloningSubset: []string{".github/workflows"},
 	})
+}
+
+func normalizeRepositoryName(repo string) string {
+	return strings.TrimPrefix(repo, "https://github.com/")
 }
 
 // LocalRepository processes a local repository at the given path. This is used for testing and can also be used by users who want to apply the patch to a local repository without creating a PR.
@@ -211,7 +215,7 @@ const (
 // It applies the patch and creates a PR if there are changes.
 func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
 	rLogger := logger.With("repository", repo)
-	
+
 	if isEmpty {
 		rLogger.Info("The repository is empty, skipping")
 		opts.OnRepositorySkipped(ctx, repo, SkippedReasonEmptyRepository)
@@ -249,7 +253,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 
 		if headFn, err := github.ForkAndAddRemote(ctx, xr, forkRemoteName); err != nil {
 			return err
-		} else {
+		}  else {
 			head = headFn(opts.TargetBranch)
 		}
 
