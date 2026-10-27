@@ -52,11 +52,12 @@ var repositoryCmd = &cobra.Command{
 		}
 
 		return patch.Repository(cmd.Context(), args[0], patch.PatchOptions{
-			TargetBranch: patchFlags.prBranch,
-			PRBody:       prBody,
-			TrustedOrgs:  patchFlags.prTrustedOrgs,
-			CommitMsg:    patchFlags.prCommitMsg,
-			NeedsFork:    patchFlags.prFork,
+			TargetBranch:     patchFlags.prBranch,
+			PRBody:           prBody,
+			TrustedOrgs:      patchFlags.prTrustedOrgs,
+			CommitMsg:        patchFlags.prCommitMsg,
+			NeedsFork:        patchFlags.prFork,
+			VersionAlignment: versionAlignment(),
 			OnRepositorySkipped: func(ctx context.Context, repo string, reason patch.SkippedReason) {
 				cmd.Printf("Repository %q skipped: %s\n", repo, reason.String())
 			},
@@ -80,11 +81,12 @@ var organizationCmd = &cobra.Command{
 		}
 
 		return patch.Organization(cmd.Context(), args[0], patch.PatchOptions{
-			TargetBranch: patchFlags.prBranch,
-			PRBody:       prBody,
-			TrustedOrgs:  patchFlags.prTrustedOrgs,
-			CommitMsg:    patchFlags.prCommitMsg,
-			NeedsFork:    patchFlags.prFork,
+			TargetBranch:     patchFlags.prBranch,
+			PRBody:           prBody,
+			TrustedOrgs:      patchFlags.prTrustedOrgs,
+			CommitMsg:        patchFlags.prCommitMsg,
+			NeedsFork:        patchFlags.prFork,
+			VersionAlignment: versionAlignment(),
 			OnRepositoryErr: func(ctx context.Context, repo string, err error) error {
 				cmd.Printf("Error processing repository %q: %v\n", repo, err)
 				return nil
@@ -122,7 +124,9 @@ var localRepositoryCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
-		return patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{})
+		return patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{
+			VersionAlignment: versionAlignment(),
+		})
 	},
 }
 

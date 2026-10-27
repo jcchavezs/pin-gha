@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -254,14 +255,14 @@ func withMockResolver(t *testing.T, fn func(_ context.Context, action, version s
 
 func TestPatchLocalRepositoryFS(t *testing.T) {
 	t.Run("no workflows directory returns nil", func(t *testing.T) {
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), afero.NewMemMapFs(), nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), afero.NewMemMapFs(), nil, VersionAlignmentNone))
 	})
 
 	t.Run("non yaml files are ignored", func(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
 		require.NoError(t, afero.WriteFile(fs, ".github/workflows/notes.txt", []byte("not yaml"), 0644))
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		// Verify the non-yaml file is unchanged.
 		b, err := afero.ReadFile(fs, ".github/workflows/notes.txt")
 		require.NoError(t, err)
@@ -272,7 +273,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		const content = "jobs:\n  build:\n    steps:\n      - name: Run something\n"
 		setupWorkflow(t, fs, content)
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -280,7 +281,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		const content = "jobs:\n  build:\n    steps:\n      - uses: jcchavezs/my-action@v1.2.3\n"
 		setupWorkflow(t, fs, content)
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, []string{"jcchavezs"}))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, []string{"jcchavezs"}, VersionAlignmentNone))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -290,7 +291,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		setupWorkflow(t, fs, content)
 		// afero.Exists normalises ./local-action → local-action; create the dir.
 		require.NoError(t, fs.MkdirAll("local-action", 0755))
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -298,7 +299,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		content := fmt.Sprintf("jobs:\n  build:\n    steps:\n      - uses: actions/checkout@%s\n", mockHash)
 		setupWorkflow(t, fs, content)
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
@@ -306,7 +307,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		const content = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout\n"
 		setupWorkflow(t, fs, content)
-		require.Error(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.Error(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 	})
 
 	t.Run("stable release is pinned with hash and version comment", func(t *testing.T) {
@@ -319,7 +320,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 			}
 			return "", "", fmt.Errorf("unexpected: %s@%s", action, version)
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		got := readWorkflowContent(t, fs)
 		require.Contains(t, got, fmt.Sprintf("actions/checkout@%s # v4.1.0", mockHash))
 		require.NotContains(t, got, "actions/checkout@v4.1.0")
@@ -332,7 +333,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return mockHash, "main", nil
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		today := time.Now().Format("2006-01-02")
 		require.Contains(t, readWorkflowContent(t, fs), fmt.Sprintf("actions/checkout@%s # main on %s, TODO: use a release instead", mockHash, today))
 	})
@@ -344,7 +345,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return mockHash, "v4.1", nil
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		today := time.Now().Format("2006-01-02")
 		require.Contains(t, readWorkflowContent(t, fs), fmt.Sprintf("actions/checkout@%s # v4.1 on %s, TODO: use a release instead", mockHash, today))
 	})
@@ -356,7 +357,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return "", "", errUnresolvedVersion
 		})
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 		require.Contains(t, readWorkflowContent(t, fs), "actions/checkout@v4 # TODO: use a release instead")
 	})
 
@@ -367,8 +368,198 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 			return "", "", errors.New("network failure")
 		})
-		require.Error(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.Error(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 	})
+}
+
+func TestPatchLocalRepositoryFSVersionAlignment(t *testing.T) {
+	const (
+		hash411 = "1111111111111111111111111111111111111111"
+		hash420 = "2222222222222222222222222222222222222222"
+		hash399 = "3333333333333333333333333333333333333333"
+		hashRC  = "4444444444444444444444444444444444444444"
+	)
+
+	// resolved maps a declared version to what the resolver returns for it.
+	resolved := map[string]resolvedAction{
+		"v4.2.0":      {hash: hash420, version: "v4.2.0"},
+		"v4.1.0":      {hash: hash411, version: "v4.1.0"},
+		"v4":          {hash: hash420, version: "v4.2.0"},
+		"v3.9.9":      {hash: hash399, version: "v3.9.9"},
+		"v4.2.0-rc.1": {hash: hashRC, version: "v4.2.0-rc.1"},
+		"main":        {hash: mockHash, version: "main"},
+		"v9":          {err: errUnresolvedVersion},
+	}
+	today := time.Now().Format("2006-01-02")
+
+	tests := []struct {
+		name      string
+		alignment VersionAlignment
+		// workflows maps a file name to the versions of actions/checkout it uses.
+		workflows map[string][]string
+		// want maps a file name to the expected uses, in order.
+		want map[string][]string
+	}{
+		{
+			name:      "no alignment pins each version on its own",
+			alignment: VersionAlignmentNone,
+			workflows: map[string][]string{"a.yml": {"v4.2.0"}, "b.yml": {"v4.1.0"}, "c.yml": {"v3.9.9"}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"b.yml": {"actions/checkout@" + hash411 + " # v4.1.0"},
+				"c.yml": {"actions/checkout@" + hash399 + " # v3.9.9"},
+			},
+		},
+		{
+			name:      "major alignment aligns within a major",
+			alignment: VersionAlignmentMajor,
+			workflows: map[string][]string{"a.yml": {"v4.2.0"}, "b.yml": {"v4.1.0"}, "c.yml": {"v3.9.9"}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"b.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"c.yml": {"actions/checkout@" + hash399 + " # v3.9.9"},
+			},
+		},
+		{
+			name:      "all alignment aligns across majors",
+			alignment: VersionAlignmentAll,
+			workflows: map[string][]string{"a.yml": {"v4.2.0"}, "b.yml": {"v4.1.0"}, "c.yml": {"v3.9.9"}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"b.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"c.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+			},
+		},
+		{
+			name:      "aligns versions declared in the same file",
+			alignment: VersionAlignmentMajor,
+			workflows: map[string][]string{"a.yml": {"v4.1.0", "v4"}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0", "actions/checkout@" + hash420 + " # v4.2.0"},
+			},
+		},
+		{
+			name:      "a branch is never aligned to a release",
+			alignment: VersionAlignmentAll,
+			workflows: map[string][]string{"a.yml": {"v4.2.0"}, "b.yml": {"main"}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"b.yml": {"actions/checkout@" + mockHash + " # main on " + today + ", TODO: use a release instead"},
+			},
+		},
+		{
+			name:      "an unresolved version is left alone",
+			alignment: VersionAlignmentAll,
+			workflows: map[string][]string{"a.yml": {"v4.2.0"}, "b.yml": {"v9"}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"b.yml": {"actions/checkout@v9 # TODO: use a release instead"},
+			},
+		},
+		{
+			name:      "a release wins over its pre-release",
+			alignment: VersionAlignmentAll,
+			workflows: map[string][]string{"a.yml": {"v4.2.0-rc.1"}, "b.yml": {"v4.2.0"}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"b.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+			},
+		},
+		{
+			name:      "uses already pinned to a hash are not touched",
+			alignment: VersionAlignmentAll,
+			workflows: map[string][]string{"a.yml": {"v4.2.0"}, "b.yml": {strings.Repeat("a", 40)}},
+			want: map[string][]string{
+				"a.yml": {"actions/checkout@" + hash420 + " # v4.2.0"},
+				"b.yml": {"actions/checkout@" + strings.Repeat("a", 40)},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+			require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
+			for name, versions := range tt.workflows {
+				var steps strings.Builder
+				for _, version := range versions {
+					fmt.Fprintf(&steps, "      - uses: actions/checkout@%s\n", version)
+				}
+				require.NoError(t, afero.WriteFile(fs, ".github/workflows/"+name, []byte("jobs:\n  build:\n    steps:\n"+steps.String()), 0644))
+			}
+
+			withMockResolver(t, func(_ context.Context, action, version string) (string, string, error) {
+				require.Equal(t, "actions/checkout", action)
+				r, ok := resolved[version]
+				require.True(t, ok, "unexpected version: %s", version)
+				return r.hash, r.version, r.err
+			})
+
+			require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, tt.alignment))
+
+			for name, wantUses := range tt.want {
+				content, err := afero.ReadFile(fs, ".github/workflows/"+name)
+				require.NoError(t, err)
+
+				var gotUses []string
+				for line := range strings.SplitSeq(string(content), "\n") {
+					if _, uses, found := strings.Cut(line, "- uses: "); found {
+						gotUses = append(gotUses, uses)
+					}
+				}
+				require.Equal(t, wantUses, gotUses, name)
+			}
+		})
+	}
+}
+
+func TestPatchLocalRepositoryFSAlignmentLeavesFilesUntouchedOnError(t *testing.T) {
+	fs := afero.NewMemMapFs()
+	require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
+	const original = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n"
+	require.NoError(t, afero.WriteFile(fs, ".github/workflows/a.yml", []byte(original), 0644))
+	require.NoError(t, afero.WriteFile(fs, ".github/workflows/b.yml", []byte(strings.ReplaceAll(original, "v4", "v3")), 0644))
+
+	withMockResolver(t, func(_ context.Context, _, version string) (string, string, error) {
+		if version == "v3" {
+			return "", "", errors.New("boom")
+		}
+		return mockHash, "v4.2.0", nil
+	})
+
+	err := patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentAll)
+	require.ErrorContains(t, err, "resolving actions/checkout@v3")
+
+	content, err := afero.ReadFile(fs, ".github/workflows/a.yml")
+	require.NoError(t, err)
+	require.Equal(t, original, string(content))
+}
+
+func TestVersionNumbers(t *testing.T) {
+	tests := []struct {
+		version string
+		want    [3]int
+		ok      bool
+	}{
+		{"v4", [3]int{4}, true},
+		{"v4.2", [3]int{4, 2}, true},
+		{"v4.2.1", [3]int{4, 2, 1}, true},
+		{"4.2.1", [3]int{4, 2, 1}, true},
+		{"v4.2.1-rc.1", [3]int{4, 2, 1}, true},
+		{"v4.2.1+build.7", [3]int{4, 2, 1}, true},
+		{"v4.2.1.9", [3]int{}, false},
+		{"main", [3]int{}, false},
+		{"", [3]int{}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			got, ok := versionNumbers(tt.version)
+			require.Equal(t, tt.ok, ok)
+			if tt.ok {
+				require.Equal(t, tt.want, got)
+			}
+		})
+	}
 }
 
 func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
@@ -388,7 +579,7 @@ func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
 				return "2222222222222222222222222222222222222222", version, nil
 			})
 
-			require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+			require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 
 			got := readWorkflowContent(t, fs)
 			require.Contains(t, got, "actions/checkout@1111111111111111111111111111111111111111 # v4.2.0\n")
@@ -407,7 +598,7 @@ func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
 			return "2222222222222222222222222222222222222222", "v4.3.0", nil
 		})
 
-		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, VersionAlignmentNone))
 
 		got := readWorkflowContent(t, fs)
 		require.Contains(t, got, "- uses: actions/checkout@1111111111111111111111111111111111111111 # v4.2.0\n")
@@ -419,7 +610,6 @@ func TestReplaceUsesQuoted(t *testing.T) {
 	got := replaceUses([]byte("- uses: \"actions/checkout@v4\"\n- uses: 'actions/checkout@v4'\n"), "actions/checkout@v4", "actions/checkout@abc # v4.2.0")
 	require.Equal(t, "- uses: \"actions/checkout@abc\" # v4.2.0\n- uses: 'actions/checkout@abc' # v4.2.0\n", string(got))
 }
-
 func TestResolveCommitHashWithExecer(t *testing.T) {
 	t.Run("fetch tags fails returns error", func(t *testing.T) {
 		xr := mock.Execer{

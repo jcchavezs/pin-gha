@@ -10,13 +10,13 @@ const defaultTagetBranch = "pin-gha"
 const defaultCommitMsg = "chore(sec|gha): uses pinned versions of github actions"
 
 type PRDetails struct {
-	URL        string
+	URL string
 }
 
 type SkippedReason int
 
 const (
-	SkippedReasonUnknown		 SkippedReason = iota
+	SkippedReasonUnknown SkippedReason = iota
 	SkippedReasonEmptyRepository
 	SkippedReasonAlreadyPinned
 )
@@ -42,7 +42,10 @@ type PatchOptions struct {
 	// PRAsDraft indicates whether the created PR should be a draft.
 	PRAsDraft bool
 	// NeedsFork indicates whether to fork the repository when creating the PR.
-	NeedsFork      bool
+	NeedsFork bool
+	// VersionAlignment selects how the versions of the same action are aligned
+	// across the workflows of a repository.
+	VersionAlignment VersionAlignment
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
 	// untouched.
 	TrustedOrgs []string
@@ -56,7 +59,7 @@ type PatchOptions struct {
 	// The error returned by this callback will be considered the final error for that repository, and it will be returned by the patching functions.
 	// If this callback is not set, any error will be returned as-is.
 	OnRepositoryErr func(context.Context, string, error) error
-	
+
 	// OnRepositorySkipped is a callback that will be called when a repository is skipped, with the reason for skipping.
 	OnRepositorySkipped func(context.Context, string, SkippedReason)
 
@@ -101,6 +104,9 @@ type LocalPatchOptions struct {
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
 	// untouched.
 	TrustedOrgs []string
+	// VersionAlignment selects how the versions of the same action are aligned
+	// across the workflows of the repository.
+	VersionAlignment VersionAlignment
 
 	// LogHandler is a function that retrieves a slog.Handler from the context.
 	LogHandler slog.Handler

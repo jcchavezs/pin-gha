@@ -71,14 +71,23 @@ Hash: 11bd71901bbe5b1630ceea73d27597364c9af683
 
 ## Options
 
-The `repository` and `organization` subcommands share the following flags:
+The `repository`, `organization`, and `local-repository` subcommands support version alignment:
 
-| Flag             | Default                                            | Description                                                                        |
-| ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `--pr-branch`    | `pin-actions`                                      | Branch name used when creating or updating PRs                                     |
-| `--pr-body-path` | _(built-in template)_                              | Path to a file whose content is used as the PR body                                |
-| `--trusted-org`  |                                                    | Comma-separated list of GitHub organisations whose actions are left untouched      |
-| `--pr-commit-msg`| `chore(security): uses pinned versions of actions` | Commit message used when committing pinned actions                                 |
+| Flag                       | Description                                                                                  |
+| -------------------------- | -------------------------------------------------------------------------------------------- |
+| `--major-version-alignment`| Aligns uses of each action within the same major version across workflow files               |
+| `--all-version-alignment`  | Aligns all uses of each action to one version across workflow files (mutually exclusive with the above) |
+
+Alignment is applied per repository, so with `organization` each repository is aligned on its own. Each use is pinned to the highest resolved release version of its group (`v4.2.0` over `v4.1.0`, a release over its pre-release). References that are not releases, such as branches, and uses already pinned to a commit hash are left as they are.
+
+`repository` and `organization` also support the following flags:
+
+| Flag              | Default                                             | Description                                                                   |
+| ----------------- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `--pr-branch`     | `pin-actions`                                       | Branch name used when creating or updating PRs                                |
+| `--pr-body-path`  | _(built-in template)_                               | Path to a file whose content is used as the PR body                           |
+| `--trusted-org`   |                                                     | Comma-separated list of GitHub organisations whose actions are left untouched |
+| `--pr-commit-msg` | `chore(security): uses pinned versions of actions` | Commit message used when committing pinned actions                            |
 
 Global flags:
 
