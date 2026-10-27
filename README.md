@@ -76,7 +76,9 @@ The `repository`, `organization`, and `local-repository` subcommands support ver
 | Flag                       | Description                                                                                  |
 | -------------------------- | -------------------------------------------------------------------------------------------- |
 | `--major-version-alignment`| Aligns uses of each action within the same major version across workflow files               |
-| `--all-version-alignment`  | Aligns all uses of each action to one version across workflow files (incompatible with above) |
+| `--all-version-alignment`  | Aligns all uses of each action to one version across workflow files (mutually exclusive with the above) |
+
+Alignment is applied per repository, so with `organization` each repository is aligned on its own. Each use is pinned to the highest resolved release version of its group (`v4.2.0` over `v4.1.0`, a release over its pre-release). References that are not releases, such as branches, and uses already pinned to a commit hash are left as they are.
 
 `repository` and `organization` also support the following flags:
 

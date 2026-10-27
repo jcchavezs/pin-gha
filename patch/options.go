@@ -43,10 +43,9 @@ type PatchOptions struct {
 	PRAsDraft bool
 	// NeedsFork indicates whether to fork the repository when creating the PR.
 	NeedsFork bool
-	// MajorVersionAlignment aligns uses of the same action within each major version.
-	MajorVersionAlignment bool
-	// AllVersionAlignment aligns all uses of the same action to one version.
-	AllVersionAlignment bool
+	// VersionAlignment selects how the versions of the same action are aligned
+	// across the workflows of a repository.
+	VersionAlignment VersionAlignment
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
 	// untouched.
 	TrustedOrgs []string
@@ -105,10 +104,9 @@ type LocalPatchOptions struct {
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
 	// untouched.
 	TrustedOrgs []string
-	// MajorVersionAlignment aligns uses of the same action within each major version.
-	MajorVersionAlignment bool
-	// AllVersionAlignment aligns all uses of the same action to one version.
-	AllVersionAlignment bool
+	// VersionAlignment selects how the versions of the same action are aligned
+	// across the workflows of the repository.
+	VersionAlignment VersionAlignment
 
 	// LogHandler is a function that retrieves a slog.Handler from the context.
 	LogHandler slog.Handler
