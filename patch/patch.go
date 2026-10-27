@@ -1,7 +1,6 @@
 package patch
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strings"
 	"time"
 
@@ -184,7 +184,7 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 					return fmt.Errorf("getting commit hash: %v", err)
 				}
 
-				wfb = bytes.ReplaceAll(wfb, []byte(uses), []byte(newUses))
+				wfb = replaceUses(wfb, uses, newUses)
 			}
 		}
 
@@ -195,6 +195,23 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 	}
 
 	return nil
+}
+
+// replaceUses replaces only the occurrences of uses that are a whole value, so
+// "actions/checkout@v4" does not match inside "actions/checkout@v4.1.0" or
+// "other-actions/checkout@v4".
+func replaceUses(content []byte, uses, newUses string) []byte {
+	re := regexp.MustCompile(`(^|[\s"'])` + regexp.QuoteMeta(uses) + `($|[\s"'])`)
+	// The comment goes after the closing quote, otherwise it becomes part of the value.
+	value, comment, hasComment := strings.Cut(newUses, " # ")
+	return re.ReplaceAllFunc(content, func(match []byte) []byte {
+		sub := re.FindSubmatch(match)
+		lead, trail := sub[1], sub[2]
+		if hasComment && (string(trail) == `"` || string(trail) == "'") {
+			return []byte(string(lead) + value + string(trail) + " # " + comment)
+		}
+		return []byte(string(lead) + newUses + string(trail))
+	})
 }
 
 const (
