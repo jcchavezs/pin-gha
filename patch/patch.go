@@ -1,7 +1,6 @@
 package patch
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -10,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -78,7 +78,7 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	}
 	opts = opts.withDefaults()
 
-	return iterator.RunForRepository(ctx, repo, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
+	return iterator.RunForRepository(ctx, normalizeRepositoryName(repo), func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
 		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
 			return opts.OnRepositoryErr(ctx, repo, err)
 		}
@@ -89,6 +89,10 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 		LogHandler:    opts.LogHandler,
 		CloningSubset: []string{".github/workflows"},
 	})
+}
+
+func normalizeRepositoryName(repo string) string {
+	return strings.TrimPrefix(repo, "https://github.com/")
 }
 
 // LocalRepository processes a local repository at the given path. This is used for testing and can also be used by users who want to apply the patch to a local repository without creating a PR.
@@ -253,7 +257,7 @@ func patchLocalRepositoryFSWithAlignment(ctx context.Context, logger *slog.Logge
 				ref := actionVersion{action: pkg, version: version}
 				resolved := resolutions[ref]
 				if resolved.err == errUnresolvedVersion {
-					wfb = bytes.ReplaceAll(wfb, []byte(uses), []byte(fmt.Sprintf("%s@%s # TODO: use a release instead", pkg, version)))
+					wfb = replaceUses(wfb, uses, fmt.Sprintf("%s@%s # TODO: use a release instead", pkg, version))
 					continue
 				}
 				if majorVersionAlignment || allVersionAlignment {
@@ -282,7 +286,7 @@ func patchLocalRepositoryFSWithAlignment(ctx context.Context, logger *slog.Logge
 					newUses = fmt.Sprintf("%s@%s # %s", pkg, resolved.hash, resolved.version)
 				}
 
-				wfb = bytes.ReplaceAll(wfb, []byte(uses), []byte(newUses))
+				wfb = replaceUses(wfb, uses, newUses)
 			}
 		}
 
@@ -352,6 +356,23 @@ func newerResolvedVersion(candidate, current resolvedAction) bool {
 		return candidate.version < current.version
 	}
 	return candidate.hash < current.hash
+}
+
+// replaceUses replaces only the occurrences of uses that are a whole value, so
+// "actions/checkout@v4" does not match inside "actions/checkout@v4.1.0" or
+// "other-actions/checkout@v4".
+func replaceUses(content []byte, uses, newUses string) []byte {
+	re := regexp.MustCompile(`(^|[\s"'])` + regexp.QuoteMeta(uses) + `($|[\s"'])`)
+	// The comment goes after the closing quote, otherwise it becomes part of the value.
+	value, comment, hasComment := strings.Cut(newUses, " # ")
+	return re.ReplaceAllFunc(content, func(match []byte) []byte {
+		sub := re.FindSubmatch(match)
+		lead, trail := sub[1], sub[2]
+		if hasComment && (string(trail) == `"` || string(trail) == "'") {
+			return []byte(string(lead) + value + string(trail) + " # " + comment)
+		}
+		return []byte(string(lead) + newUses + string(trail))
+	})
 }
 
 const (
