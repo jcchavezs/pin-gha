@@ -373,9 +373,10 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 
 func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
 	// The result must not depend on which of the two steps is processed first.
+	// Steps of a single job are ordered, unlike jobs which are a map.
 	for name, content := range map[string]string{
-		"short version first": "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n  b:\n    steps:\n      - uses: actions/checkout@v4.1.0\n",
-		"long version first":  "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4.1.0\n  b:\n    steps:\n      - uses: actions/checkout@v4\n",
+		"short version first": "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/checkout@v4.1.0\n",
+		"long version first":  "jobs:\n  a:\n    steps:\n      - uses: actions/checkout@v4.1.0\n      - uses: actions/checkout@v4\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			fs := afero.NewMemMapFs()
@@ -412,6 +413,11 @@ func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
 		require.Contains(t, got, "- uses: actions/checkout@1111111111111111111111111111111111111111 # v4.2.0\n")
 		require.Contains(t, got, "- uses: other-actions/checkout@2222222222222222222222222222222222222222 # v4.3.0\n")
 	})
+}
+
+func TestReplaceUsesQuoted(t *testing.T) {
+	got := replaceUses([]byte("- uses: \"actions/checkout@v4\"\n- uses: 'actions/checkout@v4'\n"), "actions/checkout@v4", "actions/checkout@abc # v4.2.0")
+	require.Equal(t, "- uses: \"actions/checkout@abc\" # v4.2.0\n- uses: 'actions/checkout@abc' # v4.2.0\n", string(got))
 }
 
 func TestResolveCommitHashWithExecer(t *testing.T) {

@@ -202,8 +202,16 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 // "other-actions/checkout@v4".
 func replaceUses(content []byte, uses, newUses string) []byte {
 	re := regexp.MustCompile(`(^|[\s"'])` + regexp.QuoteMeta(uses) + `($|[\s"'])`)
-	replacement := strings.ReplaceAll(newUses, "$", "$$")
-	return re.ReplaceAll(content, []byte("${1}"+replacement+"${2}"))
+	// The comment goes after the closing quote, otherwise it becomes part of the value.
+	value, comment, hasComment := strings.Cut(newUses, " # ")
+	return re.ReplaceAllFunc(content, func(match []byte) []byte {
+		sub := re.FindSubmatch(match)
+		lead, trail := sub[1], sub[2]
+		if hasComment && (string(trail) == `"` || string(trail) == "'") {
+			return []byte(string(lead) + value + string(trail) + " # " + comment)
+		}
+		return []byte(string(lead) + newUses + string(trail))
+	})
 }
 
 const (
