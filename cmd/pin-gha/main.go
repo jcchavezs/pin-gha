@@ -57,6 +57,10 @@ var repositoryCmd = &cobra.Command{
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
 			NeedsFork:    patchFlags.prFork,
+			DryRun:       patchFlags.dryRun,
+			OnDryRunChanges: func(ctx context.Context, repo string, d patch.DryRunDetails) {
+				cmd.Printf("Dry run: repository %q would be updated (branch %q):\n%s\n", repo, d.Branch, d.Diff)
+			},
 			OnRepositorySkipped: func(ctx context.Context, repo string, reason patch.SkippedReason) {
 				cmd.Printf("Repository %q skipped: %s\n", repo, reason.String())
 			},
@@ -85,6 +89,10 @@ var organizationCmd = &cobra.Command{
 			TrustedOrgs:  patchFlags.prTrustedOrgs,
 			CommitMsg:    patchFlags.prCommitMsg,
 			NeedsFork:    patchFlags.prFork,
+			DryRun:       patchFlags.dryRun,
+			OnDryRunChanges: func(ctx context.Context, repo string, d patch.DryRunDetails) {
+				cmd.Printf("Dry run: repository %q would be updated (branch %q):\n%s\n", repo, d.Branch, d.Diff)
+			},
 			OnRepositoryErr: func(ctx context.Context, repo string, err error) error {
 				cmd.Printf("Error processing repository %q: %v\n", repo, err)
 				return nil

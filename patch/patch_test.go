@@ -535,3 +535,87 @@ func TestResolveCommitHashWithExecer(t *testing.T) {
 		require.Contains(t, err.Error(), "git tag failed")
 	})
 }
+
+func TestPatchRepository_DryRun(t *testing.T) {
+	ctx := context.Background()
+	diff := "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n-uses: actions/checkout@v4\n+uses: actions/checkout@abc # v4\n"
+
+	cases := []struct {
+		name      string
+		needsFork bool
+	}{
+		{"without fork", false},
+		{"with fork", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got DryRunDetails
+			var gotRepo string
+
+			xr := mock.Execer{
+				GenerateFSFn: func() afero.Fs { return emptyMemFS() },
+				RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+					if command == "git" && args[0] == "status" {
+						return iteratorexec.Result{Stdout: "M  .github/workflows/ci.yml\n"}, nil
+					}
+					return iteratorexec.Result{}, fmt.Errorf("unexpected Run call: %s %v", command, args)
+				},
+				RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+					switch {
+					case mock.CallIs(t, command, args, "git", "checkout", "-b", defaultTagetBranch):
+						return "", nil
+					case command == "git" && args[0] == "add":
+						return "", nil
+					case mock.CallIs(t, command, args, "git", "diff", "--cached", "--name-only"):
+						return ".github/workflows/ci.yml\n", nil
+					case mock.CallIs(t, command, args, "git", "diff", "--cached"):
+						return diff, nil
+					default:
+						return "", fmt.Errorf("unexpected RunX call (remote write in dry-run?): %s %v", command, args)
+					}
+				},
+			}
+
+			opts := PatchOptions{
+				DryRun:    true,
+				NeedsFork: tc.needsFork,
+				OnPRCreated: func(context.Context, string, PRDetails) {
+					require.Fail(t, "PR must not be created in dry-run")
+				},
+				OnDryRunChanges: func(_ context.Context, repo string, d DryRunDetails) {
+					gotRepo, got = repo, d
+				},
+			}.withDefaults()
+
+			require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, opts))
+			require.Equal(t, "org/repo", gotRepo)
+			require.Equal(t, DryRunDetails{
+				Branch: defaultTagetBranch,
+				Diff:   diff,
+				Files:  []string{".github/workflows/ci.yml"},
+			}, got)
+		})
+	}
+}
+
+func TestPatchRepository_DryRun_NoChanges(t *testing.T) {
+	xr := mock.Execer{
+		GenerateFSFn: func() afero.Fs { return emptyMemFS() },
+		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+			return iteratorexec.Result{Stdout: ""}, nil
+		},
+	}
+
+	var skipped SkippedReason
+	opts := PatchOptions{
+		DryRun: true,
+		OnRepositorySkipped: func(_ context.Context, _ string, r SkippedReason) { skipped = r },
+		OnDryRunChanges: func(context.Context, string, DryRunDetails) {
+			require.Fail(t, "no dry-run details expected when already pinned")
+		},
+	}.withDefaults()
+
+	require.NoError(t, patchRepository(context.Background(), slog.New(slog.DiscardHandler), "org/repo", false, xr, opts))
+	require.Equal(t, SkippedReasonAlreadyPinned, skipped)
+}
