@@ -251,6 +251,17 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 		return err
 	}
 
+	if opts.DryRun {
+		details, err := stagedChanges(ctx, xr, opts.TargetBranch)
+		if err != nil {
+			return err
+		}
+
+		rLogger.Info("dry-run: skipping push and PR creation", "files", details.Files)
+		opts.OnDryRunChanges(ctx, repo, details)
+		return nil
+	}
+
 	if err := github.Commit(ctx, xr, opts.CommitMsg, "--all"); err != nil {
 		return err
 	}
@@ -290,6 +301,24 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 	})
 
 	return nil
+}
+
+func stagedChanges(ctx context.Context, xr iteratorexec.Execer, branch string) (DryRunDetails, error) {
+	names, err := xr.RunX(ctx, "git", "diff", "--cached", "--name-only")
+	if err != nil {
+		return DryRunDetails{}, fmt.Errorf("listing staged files: %w", err)
+	}
+
+	diff, err := xr.RunX(ctx, "git", "diff", "--cached")
+	if err != nil {
+		return DryRunDetails{}, fmt.Errorf("getting staged diff: %w", err)
+	}
+
+	return DryRunDetails{
+		Branch: branch,
+		Diff:   diff,
+		Files:  strings.Fields(names),
+	}, nil
 }
 
 var errUnresolvedVersion = errors.New("unresolved version")
