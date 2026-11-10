@@ -13,6 +13,16 @@ type PRDetails struct {
 	URL        string
 }
 
+// DryRunDetails describes the changes that would have been pushed in a dry run.
+type DryRunDetails struct {
+	// Branch is the branch that would have been pushed.
+	Branch string
+	// Diff is the staged diff of the workflow files.
+	Diff string
+	// Files are the workflow files that would have changed.
+	Files []string
+}
+
 type SkippedReason int
 
 const (
@@ -41,6 +51,8 @@ type PatchOptions struct {
 	PRBody string
 	// PRAsDraft indicates whether the created PR should be a draft.
 	PRAsDraft bool
+	// DryRun runs the pinning logic on the clone but skips fork, push and PR creation.
+	DryRun bool
 	// NeedsFork indicates whether to fork the repository when creating the PR.
 	NeedsFork      bool
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
@@ -62,6 +74,9 @@ type PatchOptions struct {
 
 	// OnPRCreated is a callback that will be called when a PR is created.
 	OnPRCreated func(context.Context, string, PRDetails)
+
+	// OnDryRunChanges is called, only in dry-run mode, for each repository that would have been changed.
+	OnDryRunChanges func(context.Context, string, DryRunDetails)
 }
 
 const defaultPRBody = `This pull request updates the GitHub Actions workflow files to use pinned commit SHAs for all third-party actions, improving security and reproducibility.`
@@ -92,6 +107,10 @@ func (o PatchOptions) withDefaults() PatchOptions {
 
 	if o.OnPRCreated == nil {
 		o.OnPRCreated = func(context.Context, string, PRDetails) {}
+	}
+
+	if o.OnDryRunChanges == nil {
+		o.OnDryRunChanges = func(context.Context, string, DryRunDetails) {}
 	}
 
 	return o
