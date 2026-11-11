@@ -39,6 +39,16 @@ type Repository struct {
 	PushedAt          time.Time `json:"pushed_at"`
 }
 
+// IsEmpty reports whether the repository has no content (size 0).
+func (r Repository) IsEmpty() bool {
+	return r.Size == 0
+}
+
+// String returns the full name (owner/repo).
+func (r Repository) String() string {
+	return r.Name
+}
+
 var (
 	baseDir  string
 	reposDir string
@@ -54,10 +64,11 @@ func init() {
 
 // Processor is the function that process a repository.
 // - ctx is the context to cancel the processing.
-// - repository is the name of the repository.
-// - isEmpty is a flag to indicate if the repository is empty i.e. no branches nor commits.
-// - exec is an exec.Execer to run commands in the repository directory.
-type Processor func(ctx context.Context, repository string, isEmpty bool, exec exec.Execer) error
+// - repository is the representation of the repository.
+// - xr is an exec.Execer to run commands. With the Run* functions it runs in the clone,
+// with the View* functions there is no clone and `GH_REPO` is set to the repository.
+// Returning an error aborts the whole run.
+type Processor func(ctx context.Context, repository Repository, xr exec.Execer) error
 
 // CloneCacheKey is a function to generate a cache key for a repository clone.
 type CloneCacheKey func(repository Repository) string
@@ -81,15 +92,23 @@ type Options struct {
 	// CloningSubset is a list of files or directories to clone to avoid cloning the whole repository.
 	// it is helpful on big repositories to speed up the process.
 	CloningSubset []string
+	// Ref is the branch, tag or full commit SHA to fetch and check out instead of the default
+	// branch, similar to `ref` in actions/checkout. The checkout is left in a detached HEAD at
+	// that revision. Short SHAs are not supported by git when fetching.
+	//
+	// Only valid when calling `RunForRepository`: a single ref makes no sense across the many
+	// repositories of an organization, so `RunForOrganization` returns an error if it is set.
+	Ref string
 	// FetchDepth is the number of commits to fetch, similar to `fetch-depth` in actions/checkout.
 	// Defaults to 1 (a shallow clone with only the latest commit) when 0. Set a negative value
 	// to fetch the whole history.
 	FetchDepth int
 	// NumberOfWorkers is the number of workers to process the repositories concurrently, by default it
-	// uses 10 workers. Only valid when calling `RunForOrganization``
+	// uses 10 workers. Not used by RunForRepository.
 	NumberOfWorkers int
 	// Debug is a flag to print debug information.
-	// deprecated
+	//
+	// Deprecated: use LogHandler.
 	Debug bool
 	// Log handler
 	LogHandler slog.Handler
@@ -99,7 +118,8 @@ type Options struct {
 
 const (
 	defaultNumberOfWorkers = 10
-	GithubAPIVersion       = "2022-11-28"
+	// GithubAPIVersion is the GitHub REST API version sent in API requests.
+	GithubAPIVersion = "2022-11-28"
 )
 
 // Result holds the result from running the iterator for an organization.
@@ -113,9 +133,14 @@ type Result struct {
 	Processed int
 }
 
-// RunForOrganization runs the processor for all repositories in an organization. Repositories
-// start being processed as soon as the first page is retrieved, without waiting for the rest.
+// RunForOrganization runs the processor concurrently for the matching repositories of an
+// organization, cloning each one first. Repositories start being processed as soon as the first
+// page is retrieved, without waiting for the rest. Use ViewRepositoriesInOrganization if no clone is needed.
 func RunForOrganization(ctx context.Context, orgName string, searchOpts SearchOptions, processor Processor, opts RunOptions) (Result, error) {
+	if opts.Ref != "" {
+		return Result{}, errRefNotSupportedForOrganization
+	}
+
 	defer os.RemoveAll(reposDir) //nolint:errcheck
 
 	ctx, logger := setupLogger(ctx, opts.LogHandler, opts.Debug)
@@ -279,7 +304,7 @@ func streamRepoPages(ctx context.Context, searchOpts SearchOptions, orgName stri
 	return out, nil
 }
 
-func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (context.Context, *slog.Logger) {
+func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool, logFieldsKV ...any) (context.Context, *slog.Logger) {
 	var logger *slog.Logger
 	if logHandler != nil {
 		logger = slog.New(logHandler)
@@ -287,6 +312,10 @@ func setupLogger(ctx context.Context, logHandler slog.Handler, debug bool) (cont
 		logger = slog.Default()
 	} else {
 		logger = slog.New(log.DiscardHandler)
+	}
+
+	if len(logFieldsKV) > 0 {
+		logger = logger.With(logFieldsKV...)
 	}
 
 	return log.NewCtx(ctx, logger), logger
@@ -531,6 +560,10 @@ func runForReposConcurrently(
 			wg.Wait()
 			defer close(errC)
 
+			if err := ctx.Err(); err != nil {
+				return Result{}, err
+			}
+
 			select {
 			case err := <-errC:
 				return Result{}, err
@@ -589,6 +622,8 @@ func RunForRepository(ctx context.Context, repoName string, processor Processor,
 
 var (
 	errNoDefaultBranch = errors.New("no default branch")
+
+	errRefNotSupportedForOrganization = errors.New("the Ref option is only supported by RunForRepository")
 )
 
 // hashCloningSubset generates a hash for the cloning subset to be used as part of the cache key when cloning repositories with a subset of files or directories.
@@ -596,8 +631,14 @@ func hashCloningSubset(cs []string) string {
 	return fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(cs, "|"))))[:16]
 }
 
+// hashRef generates a hash for the ref to be used as part of the cache key so clones of
+// different refs of the same repository do not share a directory.
+func hashRef(ref string) string {
+	return fmt.Sprintf("%x", md5.Sum([]byte(ref)))[:16]
+}
+
 // cloneDirName builds the name of the directory holding a clone. Clones with different
-// subsets or fetch depths must not share a directory. The subset and depth segments are
+// subsets, fetch depths or refs must not share a directory. The subset and depth segments are
 // always present so the name can be parsed unambiguously from the right, regardless of
 // what the (arbitrary) cache key contains.
 func cloneDirName(repo Repository, cacheKey string, opts RunOptions) string {
@@ -606,7 +647,12 @@ func cloneDirName(repo Repository, cacheKey string, opts RunOptions) string {
 		subset = hashCloningSubset(opts.CloningSubset)
 	}
 
-	return fmt.Sprintf("%s-%s-subset%s-depth%d", repo.Name, cacheKey, subset, effectiveFetchDepth(opts.FetchDepth))
+	ref := "none"
+	if opts.Ref != "" {
+		ref = hashRef(opts.Ref)
+	}
+
+	return fmt.Sprintf("%s-%s-subset%s-depth%d-ref%s", repo.Name, cacheKey, subset, effectiveFetchDepth(opts.FetchDepth), ref)
 }
 
 // cloneGates holds one single-slot gate per cache directory.
@@ -713,7 +759,7 @@ func effectiveFetchDepth(depth int) int {
 
 // fetchArgs returns the git fetch arguments for the given depth and branch. When
 // blobless is true, blobs are not downloaded upfront but lazily on checkout.
-func fetchArgs(depth int, branch string, blobless bool) []string {
+func fetchArgs(depth int, ref string, blobless bool) []string {
 	args := []string{"fetch", "--no-tags"}
 	if blobless {
 		args = append(args, "--filter=blob:none")
@@ -723,7 +769,7 @@ func fetchArgs(depth int, branch string, blobless bool) []string {
 		args = append(args, "--depth="+strconv.Itoa(d))
 	}
 
-	return append(args, "origin", branch)
+	return append(args, "origin", ref)
 }
 
 // cloneRepository clones the repository to the given directory.
@@ -756,15 +802,25 @@ func cloneRepository(ctx context.Context, repo Repository, repoDir string, opts 
 		}
 	}
 
-	if repo.DefaultBranchName == "" {
+	// By default the tip of the default branch is cloned and checked out. With a ref, whatever
+	// was fetched is checked out through FETCH_HEAD as the ref may be a tag or a SHA, which
+	// don't produce a local branch.
+	fetchRef, checkoutRef := repo.DefaultBranchName, repo.DefaultBranchName
+	if opts.Ref != "" {
+		if strings.HasPrefix(opts.Ref, "-") {
+			return fmt.Errorf("invalid ref %q", opts.Ref)
+		}
+
+		fetchRef, checkoutRef = opts.Ref, "FETCH_HEAD"
+	} else if repo.DefaultBranchName == "" {
 		return errNoDefaultBranch
 	}
 
-	if _, err := xr.RunX(ctx, "git", fetchArgs(opts.FetchDepth, repo.DefaultBranchName, len(opts.CloningSubset) > 0)...); err != nil {
-		return fmt.Errorf("fetching HEAD: %w", err)
+	if _, err := xr.RunX(ctx, "git", fetchArgs(opts.FetchDepth, fetchRef, len(opts.CloningSubset) > 0)...); err != nil {
+		return fmt.Errorf("fetching %s: %w", fetchRef, err)
 	}
 
-	if _, err := xr.RunX(ctx, "git", "checkout", repo.DefaultBranchName); err != nil {
+	if _, err := xr.RunX(ctx, "git", "checkout", checkoutRef); err != nil {
 		return fmt.Errorf("checking out HEAD: %w", err)
 	}
 
@@ -782,7 +838,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	if repo.Size == 0 {
 		logger.Debug("Empty repository")
 
-		if err := processor(processCtx, repo.Name, true, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
+		if err := processor(processCtx, repo, exec.NewExecer("").WithEnv("GH_REPO", repo.Name)); err != nil {
 			return fmt.Errorf("processing empty repository: %w", err)
 		}
 
@@ -796,7 +852,7 @@ func processRepository(ctx context.Context, repo Repository, processor Processor
 	}
 	defer os.RemoveAll(repoDir) //nolint:errcheck
 
-	if err := processor(processCtx, repo.Name, false, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
+	if err := processor(processCtx, repo, exec.NewExecerWithLogger(repoDir, logger)); err != nil {
 		return err
 	}
 

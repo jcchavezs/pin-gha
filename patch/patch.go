@@ -52,9 +52,9 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 		SizeCondition:    iterator.NotEmpty,
 		Source:           iterator.OnlyNonForks,
 		Page:             iterator.AllPages,
-	}, func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
-			return opts.OnRepositoryErr(ctx, repo, err)
+	}, func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repository.Name, repository.IsEmpty(), xr, opts); err != nil {
+			return opts.OnRepositoryErr(ctx, repository.Name, err)
 		}
 
 		return nil
@@ -71,9 +71,9 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
 
-	return iterator.RunForRepository(ctx, normalizeRepositoryName(repo), func(ctx context.Context, repo string, isEmpty bool, xr iteratorexec.Execer) error {
-		if err := patchRepository(ctx, slog.New(opts.LogHandler), repo, isEmpty, xr, opts); err != nil {
-			return opts.OnRepositoryErr(ctx, repo, err)
+	return iterator.RunForRepository(ctx, normalizeRepositoryName(repo), func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repository.Name, repository.IsEmpty(), xr, opts); err != nil {
+			return opts.OnRepositoryErr(ctx, repository.Name, err)
 		}
 
 		return nil
@@ -346,8 +346,8 @@ func ResolveCommitHashForAction(ctx context.Context, action, version string) (st
 		resolvedVersion string
 		err             error
 	)
-	err = iterator.RunForRepository(ctx, actionRepo, func(ctx context.Context, repository string, isEmpty bool, xr iteratorexec.Execer) error {
-		if isEmpty {
+	err = iterator.RunForRepository(ctx, actionRepo, func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
+		if repository.IsEmpty() {
 			return errUnresolvedVersion
 		}
 		hash, resolvedVersion, err = resolveCommitHashForVersion(ctx, xr, version)
