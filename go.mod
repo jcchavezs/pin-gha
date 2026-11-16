@@ -3,7 +3,7 @@ module github.com/jcchavezs/pin-gha
 go 1.26.0
 
 require (
-	github.com/jcchavezs/gh-iterator v0.8.2
+	github.com/jcchavezs/gh-iterator v0.9.0
 	github.com/spf13/afero v1.15.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1

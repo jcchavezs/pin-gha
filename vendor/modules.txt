@@ -4,7 +4,7 @@ github.com/alexellis/go-execute/v2
 # github.com/inconshreveable/mousetrap v1.1.0
 ## explicit; go 1.18
 github.com/inconshreveable/mousetrap
-# github.com/jcchavezs/gh-iterator v0.8.2
+# github.com/jcchavezs/gh-iterator v0.9.0
 ## explicit; go 1.26.0
 github.com/jcchavezs/gh-iterator
 github.com/jcchavezs/gh-iterator/exec

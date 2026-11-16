@@ -13,8 +13,8 @@ github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 h1:EwtI+Al+DeppwYX2oX
 github.com/google/pprof v0.0.0-20260402051712-545e8a4df936/go.mod h1:MxpfABSjhmINe3F1It9d+8exIHFvUqtLIRCdOGNXqiI=
 github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2s0bqwp9tc8=
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
-github.com/jcchavezs/gh-iterator v0.8.2 h1:6BMs8iLHYA+J9I1E8Q1sNsoKZeKn2M6L2dj63dBJxZs=
-github.com/jcchavezs/gh-iterator v0.8.2/go.mod h1:CsHnzM+fzI2S2xtPnekKJof1RsaUNDdDLp1pxHWpFPc=
+github.com/jcchavezs/gh-iterator v0.9.0 h1:1+STVn+daQ4ylre5+vHJiE8iD61GlaNphCP4ENTzFSA=
+github.com/jcchavezs/gh-iterator v0.9.0/go.mod h1:FrFiniTV/GDa4tU5+zKQAM77wHVdtjTiU0osyuBXzhk=
 github.com/onsi/ginkgo/v2 v2.29.0 h1:rfh+ZFjgJhYWRoIqVf3Uwx/W20yLrcrE2h2GmYVRaag=
 github.com/onsi/ginkgo/v2 v2.29.0/go.mod h1:+aXOY+vzZ5mu2iI2HpTZUPmM//oQfsNFX6gU9kNcA44=
 github.com/onsi/gomega v1.41.0 h1:OwKp4pXNgVxf6sCplzYo794OFNuoL2q2SBMU5NSWOjA=
