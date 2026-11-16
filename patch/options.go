@@ -123,11 +123,19 @@ type LocalPatchOptions struct {
 
 	// LogHandler is a function that retrieves a slog.Handler from the context.
 	LogHandler slog.Handler
+
+	// OnFileChanged is called with the path (relative to the repository root)
+	// of each workflow file that was modified.
+	OnFileChanged func(context.Context, string)
 }
 
 func (lo LocalPatchOptions) withDefaults() LocalPatchOptions {
 	if lo.LogHandler == nil {
 		lo.LogHandler = slog.Default().Handler()
+	}
+
+	if lo.OnFileChanged == nil {
+		lo.OnFileChanged = func(context.Context, string) {}
 	}
 
 	return lo

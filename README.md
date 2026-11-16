@@ -52,6 +52,12 @@ Modifies workflow files in place without creating a PR.
 pin-gha local-repository <path>
 ```
 
+Pass `--exit-code` to make the command exit with code `2` when it changed any workflow file (the files are still updated in place). It exits with `0` when everything is already pinned and with `1` on errors, which makes it usable in CI:
+
+```sh
+pin-gha local-repository --exit-code . || { echo "Workflow actions are not pinned"; exit 1; }
+```
+
 ### Resolve a single action
 
 Prints the commit hash for a specific action and version without modifying any files.

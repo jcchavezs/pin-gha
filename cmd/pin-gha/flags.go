@@ -12,6 +12,7 @@ var patchFlags struct {
 	prTrustedOrgs []string
 	prFork        bool
 	dryRun        bool
+	exitCode      bool
 }
 
 func init() {
@@ -22,6 +23,8 @@ func init() {
 	)
 
 	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd, localRepositoryCmd)
+
+	localRepositoryCmd.Flags().BoolVar(&patchFlags.exitCode, "exit-code", false, "Exit with code 2 if any workflow file was changed (files are still updated in place)")
 
 	repositoryCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-gh-actions", "Branch name used when creating or updating PRs")
 	repositoryCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")

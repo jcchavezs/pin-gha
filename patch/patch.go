@@ -1,6 +1,7 @@
 package patch
 
 import (
+	"bytes"
 	"context"
 	_ "embed"
 	"errors"
@@ -91,18 +92,24 @@ func normalizeRepositoryName(repo string) string {
 // LocalRepository processes a local repository at the given path. This is used for testing and can also be used by users who want to apply the patch to a local repository without creating a PR.
 func LocalRepository(ctx context.Context, repoPath string, opts LocalPatchOptions) error {
 	opts = opts.withDefaults()
-	return patchLocalRepositoryFS(ctx, slog.New(opts.LogHandler), afero.NewBasePathFs(afero.NewOsFs(), repoPath), opts.TrustedOrgs)
+	changed, err := patchLocalRepositoryFS(ctx, slog.New(opts.LogHandler), afero.NewBasePathFs(afero.NewOsFs(), repoPath), opts.TrustedOrgs)
+	for _, f := range changed {
+		opts.OnFileChanged(ctx, f)
+	}
+	return err
 }
 
-// patchLocalRepositoryFS applies the patch to the given FS. This is used for testing.
-func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string) error {
+// patchLocalRepositoryFS applies the patch to the given FS and returns the
+// paths of the workflow files whose content changed. This is used for testing.
+func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string) ([]string, error) {
+	var changed []string
 	today := time.Now().Format("2006-01-02")
 	files, err := afero.ReadDir(fs, path.Join(".github", "workflows"))
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return nil, nil
 		}
-		return err
+		return nil, err
 	}
 
 	if len(files) == 0 {
@@ -119,15 +126,16 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 		}
 
 		workflowPath := path.Join(".github", "workflows", file.Name())
-		wfb, err := afero.ReadFile(fs, workflowPath)
+		original, err := afero.ReadFile(fs, workflowPath)
 		if err != nil {
-			return err
+			return changed, err
 		}
+		wfb := original
 
 		wfLogger := logger.With("workflow", file.Name())
 		wf := workflow{}
 		if err := yaml.Unmarshal(wfb, &wf); err != nil {
-			return fmt.Errorf("unmarshalling workflow %q: %v", file.Name(), err)
+			return changed, fmt.Errorf("unmarshalling workflow %q: %v", file.Name(), err)
 		}
 
 		for _, job := range wf.Jobs {
@@ -160,7 +168,7 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 				pkg, version, _ := strings.Cut(uses, "@")
 
 				if version == "" {
-					return fmt.Errorf("no version specified for action %s in %q", pkg, file.Name())
+					return changed, fmt.Errorf("no version specified for action %s in %q", pkg, file.Name())
 				}
 
 				if len(version) == 40 { // commit hash length
@@ -181,20 +189,24 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 				case errUnresolvedVersion:
 					newUses = fmt.Sprintf("%s@%s # TODO: use a release instead", pkg, version)
 				default:
-					return fmt.Errorf("getting commit hash: %v", err)
+					return changed, fmt.Errorf("getting commit hash: %v", err)
 				}
 
 				wfb = replaceUses(wfb, uses, newUses)
 			}
 		}
 
-		err = afero.WriteFile(fs, workflowPath, wfb, 0644)
-		if err != nil {
-			return err
+		if bytes.Equal(original, wfb) {
+			continue
 		}
+
+		if err := afero.WriteFile(fs, workflowPath, wfb, 0644); err != nil {
+			return changed, err
+		}
+		changed = append(changed, workflowPath)
 	}
 
-	return nil
+	return changed, nil
 }
 
 // replaceUses replaces only the occurrences of uses that are a whole value, so
@@ -230,7 +242,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEm
 		return nil
 	}
 
-	if err := patchLocalRepositoryFS(ctx, rLogger, xr.GenerateFS(), opts.TrustedOrgs); err != nil {
+	if _, err := patchLocalRepositoryFS(ctx, rLogger, xr.GenerateFS(), opts.TrustedOrgs); err != nil {
 		return err
 	}
 
