@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -130,12 +131,46 @@ var localRepositoryCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
 
-		return patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{})
+		var changed []string
+		err := patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{
+			OnFileChanged: func(_ context.Context, file string) {
+				changed = append(changed, file)
+				cmd.Printf("Pinned actions in %s\n", file)
+			},
+		})
+		if err != nil {
+			return err
+		}
+
+		if patchFlags.exitCode && len(changed) > 0 {
+			return &changesError{files: changed}
+		}
+
+		return nil
 	},
+}
+
+// exitCodeChanges is the exit code used by --exit-code when workflow files were
+// changed. Errors exit with 1 so callers can tell the two apart.
+const exitCodeChanges = 2
+
+// changesError reports that workflow files were changed and --exit-code was set.
+type changesError struct {
+	files []string
+}
+
+func (e *changesError) Error() string {
+	return fmt.Sprintf("%d workflow file(s) changed", len(e.files))
 }
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
+		var cerr *changesError
+		if errors.As(err, &cerr) {
+			rootCmd.PrintErrf("%v\n", cerr)
+			os.Exit(exitCodeChanges)
+		}
+
 		if stderr, found := iteratorexec.StderrNotEmpty(iteratorexec.GetStderr(err)); found {
 			rootCmd.PrintErr(stderr)
 		}
