@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	iterator "github.com/jcchavezs/gh-iterator"
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 	"github.com/jcchavezs/gh-iterator/exec/mock"
 	"github.com/spf13/afero"
@@ -58,6 +59,24 @@ func emptyMemFS() afero.Fs {
 	return afero.NewMemMapFs()
 }
 
+var nonEmptyRepository = iterator.Repository{Name: "org/repo", Size: 1}
+
+func TestPatchRepository_EmptyRepository(t *testing.T) {
+	var skippedReason SkippedReason
+	opts := PatchOptions{
+		OnRepositorySkipped: func(_ context.Context, _ string, reason SkippedReason) { skippedReason = reason },
+	}.withDefaults()
+
+	// A mock execer without functions fails the test if any command is run.
+	require.NoError(t, patchRepository(t.Context(), slog.New(slog.DiscardHandler), iterator.Repository{Name: "org/repo"}, mock.Execer{}, opts))
+	require.Equal(t, SkippedReasonEmptyRepository, skippedReason)
+}
+
+func TestResolveCommitHashInRepository_EmptyRepository(t *testing.T) {
+	_, _, err := resolveCommitHashInRepository(t.Context(), iterator.Repository{Name: "org/action"}, mock.Execer{}, "v4")
+	require.ErrorIs(t, err, errUnresolvedVersion)
+}
+
 // TestPatchRepository_NoChanges verifies that when HasChanges returns false
 // (git status -s produces empty output), patchRepository returns nil without
 // attempting to create a branch or PR.
@@ -83,7 +102,7 @@ func TestPatchRepository_NoChanges(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), nonEmptyRepository, xr, PatchOptions{}.withDefaults()))
 }
 
 func TestNormalizeRepositoryName(t *testing.T) {
@@ -155,7 +174,7 @@ func TestPatchRepository_HasChanges_NewPR(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), nonEmptyRepository, xr, PatchOptions{}.withDefaults()))
 	require.Equal(t, defaultTagetBranch, checkedOutBranch)
 	require.Equal(t, ".github/workflows", addedPath)
 	require.Equal(t, "chore(sec|gha): uses pinned versions of github actions", commitMessage)
@@ -203,7 +222,7 @@ func TestPatchRepository_HasChanges_PRAlreadyExists(t *testing.T) {
 		},
 	}
 
-	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
+	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), nonEmptyRepository, xr, PatchOptions{}.withDefaults()))
 }
 
 // TestPatchRepository_HasChangesError verifies that an error from HasChanges
@@ -220,7 +239,7 @@ func TestPatchRepository_HasChangesError(t *testing.T) {
 		},
 	}
 
-	require.Error(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, PatchOptions{}.withDefaults()))
+	require.Error(t, patchRepository(ctx, slog.New(slog.DiscardHandler), nonEmptyRepository, xr, PatchOptions{}.withDefaults()))
 }
 
 // ---- helpers for patchLocalRepositoryFS tests ----
@@ -613,7 +632,7 @@ func TestPatchRepository_DryRun(t *testing.T) {
 				},
 			}.withDefaults()
 
-			require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), "org/repo", false, xr, opts))
+			require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), nonEmptyRepository, xr, opts))
 			require.Equal(t, "org/repo", gotRepo)
 			require.Equal(t, DryRunDetails{
 				Branch: defaultTagetBranch,
@@ -641,6 +660,6 @@ func TestPatchRepository_DryRun_NoChanges(t *testing.T) {
 		},
 	}.withDefaults()
 
-	require.NoError(t, patchRepository(context.Background(), slog.New(slog.DiscardHandler), "org/repo", false, xr, opts))
+	require.NoError(t, patchRepository(context.Background(), slog.New(slog.DiscardHandler), nonEmptyRepository, xr, opts))
 	require.Equal(t, SkippedReasonAlreadyPinned, skipped)
 }

@@ -54,7 +54,7 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 		Source:           iterator.OnlyNonForks,
 		Page:             iterator.AllPages,
 	}, func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
-		if err := patchRepository(ctx, slog.New(opts.LogHandler), repository.Name, repository.IsEmpty(), xr, opts); err != nil {
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repository, xr, opts); err != nil {
 			return opts.OnRepositoryErr(ctx, repository.Name, err)
 		}
 
@@ -73,7 +73,7 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	opts = opts.withDefaults()
 
 	return iterator.RunForRepository(ctx, normalizeRepositoryName(repo), func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
-		if err := patchRepository(ctx, slog.New(opts.LogHandler), repository.Name, repository.IsEmpty(), xr, opts); err != nil {
+		if err := patchRepository(ctx, slog.New(opts.LogHandler), repository, xr, opts); err != nil {
 			return opts.OnRepositoryErr(ctx, repository.Name, err)
 		}
 
@@ -233,10 +233,11 @@ const (
 
 // patchRepository is the function that will be called for each repository by the iterator.
 // It applies the patch and creates a PR if there are changes.
-func patchRepository(ctx context.Context, logger *slog.Logger, repo string, isEmpty bool, xr iteratorexec.Execer, opts PatchOptions) error {
+func patchRepository(ctx context.Context, logger *slog.Logger, repository iterator.Repository, xr iteratorexec.Execer, opts PatchOptions) error {
+	repo := repository.Name
 	rLogger := logger.With("repository", repo)
 
-	if isEmpty {
+	if repository.IsEmpty() {
 		rLogger.Info("The repository is empty, skipping")
 		opts.OnRepositorySkipped(ctx, repo, SkippedReasonEmptyRepository)
 		return nil
@@ -359,10 +360,7 @@ func ResolveCommitHashForAction(ctx context.Context, action, version string) (st
 		err             error
 	)
 	err = iterator.RunForRepository(ctx, actionRepo, func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
-		if repository.IsEmpty() {
-			return errUnresolvedVersion
-		}
-		hash, resolvedVersion, err = resolveCommitHashForVersion(ctx, xr, version)
+		hash, resolvedVersion, err = resolveCommitHashInRepository(ctx, repository, xr, version)
 		return err
 	}, iterator.Options{
 		UseHTTPS:      true,
@@ -371,6 +369,16 @@ func ResolveCommitHashForAction(ctx context.Context, action, version string) (st
 	})
 
 	return hash, resolvedVersion, err
+}
+
+// resolveCommitHashInRepository resolves the version in the given repository, failing
+// with errUnresolvedVersion if the repository is empty.
+func resolveCommitHashInRepository(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer, version string) (string, string, error) {
+	if repository.IsEmpty() {
+		return "", "", errUnresolvedVersion
+	}
+
+	return resolveCommitHashForVersion(ctx, xr, version)
 }
 
 // resolveCommitHashForVersion contains the core git logic for resolving a version to a commit
