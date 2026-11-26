@@ -165,6 +165,12 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 					//}
 				}
 
+				// Docker image actions are not pinned yet: https://github.com/jcchavezs/pin-gha/issues/29
+				if strings.HasPrefix(uses, "docker://") {
+					wfLogger.Debug("Skipping docker action", "uses", uses)
+					continue
+				}
+
 				pkg, version, _ := strings.Cut(uses, "@")
 
 				if version == "" {

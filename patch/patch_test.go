@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -317,6 +318,21 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		require.NoError(t, fs.MkdirAll("local-action", 0755))
 		require.NoError(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 		require.Equal(t, content, readWorkflowContent(t, fs))
+	})
+
+	t.Run("docker actions are skipped", func(t *testing.T) {
+		for _, uses := range []string{
+			"docker://alpine:3.8",
+			"docker://ghcr.io/OWNER/IMAGE_NAME",
+			"docker://gcr.io/cloud-builders/gradle",
+			"docker://alpine@sha256:" + strings.Repeat("a", 64),
+		} {
+			fs := afero.NewMemMapFs()
+			content := fmt.Sprintf("jobs:\n  build:\n    steps:\n      - uses: %s\n", uses)
+			setupWorkflow(t, fs, content)
+			require.NoError(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil), uses)
+			require.Equal(t, content, readWorkflowContent(t, fs), uses)
+		}
 	})
 
 	t.Run("already pinned 40-char hash is skipped", func(t *testing.T) {
