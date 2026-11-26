@@ -101,7 +101,7 @@ func TestPatchRepository_NoChanges(t *testing.T) {
 	ctx := context.Background()
 
 	xr := mock.Execer{
-		// GenerateFS returns an empty FS — no .github/workflows, so no patches are applied.
+		// GenerateFS returns a workflow with nothing to pin, so no patches are applied.
 		GenerateFSFn: func() afero.Fs {
 			return workflowMemFS()
 		},
