@@ -32,20 +32,32 @@ type workflow struct {
 	} `yaml:"jobs"`
 }
 
-func init() {
-	checkCommandExist("git")
-	checkCommandExist("gh")
+// requiredCommands are the external commands needed to patch remote repositories.
+var requiredCommands = []string{"git", "gh"}
+
+// checkRequiredCommands returns an error if any of the required commands is not in PATH.
+func checkRequiredCommands() error {
+	for _, c := range requiredCommands {
+		if err := checkCommandExist(c); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func checkCommandExist(path string) {
-	_, err := exec.LookPath(path)
-	if err != nil {
-		panic(fmt.Sprintf("Failed to find '%s' command. Please install it and try again.\n", path))
+func checkCommandExist(name string) error {
+	if _, err := exec.LookPath(name); err != nil {
+		return fmt.Errorf("failed to find '%s' command, please install it and try again: %w", name, err)
 	}
+	return nil
 }
 
 // Organization processes all repositories in the given organization.
 func Organization(ctx context.Context, orgName string, opts PatchOptions) error {
+	if err := checkRequiredCommands(); err != nil {
+		return err
+	}
+
 	opts = opts.withDefaults()
 
 	_, err := iterator.RunForOrganization(ctx, orgName, iterator.SearchOptions{
@@ -70,6 +82,10 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 
 // Repository processes a single repository.
 func Repository(ctx context.Context, repo string, opts PatchOptions) error {
+	if err := checkRequiredCommands(); err != nil {
+		return err
+	}
+
 	opts = opts.withDefaults()
 
 	return iterator.RunForRepository(ctx, normalizeRepositoryName(repo), func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {

@@ -19,38 +19,37 @@ import (
 )
 
 func TestCheckCommandExist(t *testing.T) {
-	tempDir, err := os.MkdirTemp("", "test")
-	require.NoError(t, err, "Failed to create temp dir")
-
-	defer os.RemoveAll(tempDir) //nolint
-
-	originPath := os.Getenv("PATH")
-	defer os.Setenv("PATH", originPath) //nolint
-
-	// Setup Test PATH
-	os.Setenv("PATH", tempDir) //nolint
+	tempDir := t.TempDir()
+	t.Setenv("PATH", tempDir)
 
 	t.Run("Existing command", func(t *testing.T) {
 		fakeCmdPath := filepath.Join(tempDir, "thisIsFakeCmd")
-		err = os.WriteFile(fakeCmdPath, []byte("#!/bin/sh\necho 'fake command'"), 0755)
-		require.NoError(t, err, "Failed to create fake command")
+		require.NoError(t, os.WriteFile(fakeCmdPath, []byte("#!/bin/sh\necho 'fake command'"), 0755))
 
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("Existing command should not panic: %v", r)
-			}
-		}()
-
-		checkCommandExist("thisIsFakeCmd")
+		require.NoError(t, checkCommandExist("thisIsFakeCmd"))
 	})
 
 	t.Run("Non-existing command", func(t *testing.T) {
-		defer func() {
-			if r := recover(); r != nil {
-				t.Errorf("Non-Existing command should panic: %v", r)
-			}
-		}()
-		checkCommandExist("thisIsFakeCmd")
+		err := checkCommandExist("thisDoesNotExist")
+		require.ErrorContains(t, err, "thisDoesNotExist")
+	})
+}
+
+func TestMissingCommands(t *testing.T) {
+	t.Setenv("PATH", t.TempDir())
+
+	t.Run("Organization returns error", func(t *testing.T) {
+		err := Organization(context.Background(), "org", PatchOptions{})
+		require.ErrorContains(t, err, "failed to find")
+	})
+
+	t.Run("Repository returns error", func(t *testing.T) {
+		err := Repository(context.Background(), "org/repo", PatchOptions{})
+		require.ErrorContains(t, err, "failed to find")
+	})
+
+	t.Run("LocalRepository does not need git or gh", func(t *testing.T) {
+		require.NoError(t, LocalRepository(context.Background(), t.TempDir(), LocalPatchOptions{}))
 	})
 }
 
