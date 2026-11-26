@@ -343,11 +343,12 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
-	t.Run("missing version returns error", func(t *testing.T) {
+	t.Run("missing version is left untouched", func(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		const content = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout\n"
 		setupWorkflow(t, fs, content)
-		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
 	t.Run("stable release is pinned with hash and version comment", func(t *testing.T) {
@@ -429,6 +430,23 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		})
 		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 	})
+}
+
+func TestPatchLocalRepositoryFSSkipsUsesWithoutVersion(t *testing.T) {
+	withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
+		return mockHash, "v4.1.0", nil
+	})
+
+	fs := afero.NewMemMapFs()
+	setupWorkflow(t, fs, "jobs:\n  build:\n    steps:\n      - uses: $/.github/actions/foo\n      - uses: actions/checkout@v4.1.0\n")
+
+	changed, err := patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{".github/workflows/ci.yml"}, changed)
+
+	content := readWorkflowContent(t, fs)
+	require.Contains(t, content, "- uses: $/.github/actions/foo\n")
+	require.Contains(t, content, "actions/checkout@"+mockHash+" # v4.1.0")
 }
 
 func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
@@ -827,10 +845,12 @@ func TestPatchLocalRepositoryFSReusableWorkflows(t *testing.T) {
 		require.Contains(t, got, "- uses: actions/checkout@"+pinnedHash+" # v4.2.0\n")
 	})
 
-	t.Run("reusable workflow without version returns error", func(t *testing.T) {
+	t.Run("reusable workflow without version is left untouched", func(t *testing.T) {
 		fs := afero.NewMemMapFs()
-		setupWorkflow(t, fs, "jobs:\n  call:\n    uses: other-org/shared/.github/workflows/build.yml\n")
-		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		const content = "jobs:\n  call:\n    uses: other-org/shared/.github/workflows/build.yml\n"
+		setupWorkflow(t, fs, content)
+		require.NoError(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 }
 

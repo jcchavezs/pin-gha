@@ -254,7 +254,9 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 			pkg, version, _ := strings.Cut(uses, "@")
 
 			if version == "" {
-				return changed, fmt.Errorf("no version specified for action %s in %q", pkg, workflowPath)
+				// A reference we cannot interpret should not prevent pinning the rest of the repository.
+				wfLogger.Warn("Skipping action without a version", "uses", uses)
+				continue
 			}
 
 			if len(version) == 40 { // commit hash length
