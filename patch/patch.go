@@ -248,7 +248,8 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 				continue
 			}
 
-			if strings.HasPrefix(uses, "./") {
+			// "$/" references an action in the same repository at the running commit so there is nothing to pin.
+			if strings.HasPrefix(uses, "./") || strings.HasPrefix(uses, "$/") {
 				wfLogger.Debug("Skipping local action", "uses", uses)
 				//if exists, _ := afero.Exists(fs, uses); exists {
 				// local action
@@ -263,12 +264,6 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 			}
 
 			pkg, version, _ := strings.Cut(uses, "@")
-
-			// A reference we cannot interpret should not prevent pinning the rest of the repository.
-			if !actionRefRe.MatchString(pkg) {
-				wfLogger.Warn("Skipping unparsable uses reference", "uses", uses)
-				continue
-			}
 
 			if version == "" {
 				// GitHub runs the default branch when no version is given, so we pin its latest commit.
@@ -456,9 +451,6 @@ func stagedChanges(ctx context.Context, xr iteratorexec.Execer, branch string) (
 		Files:  strings.Fields(names),
 	}, nil
 }
-
-// actionRefRe matches the owner/repo[/path] shape of a remote action or reusable workflow.
-var actionRefRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(/.+)?$`)
 
 var errUnresolvedVersion = errors.New("unresolved version")
 

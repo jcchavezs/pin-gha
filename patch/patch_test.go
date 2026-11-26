@@ -489,7 +489,7 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 	})
 }
 
-func TestPatchLocalRepositoryFSSkipsUnparsableUses(t *testing.T) {
+func TestPatchLocalRepositoryFSSkipsSameRepositoryUses(t *testing.T) {
 	withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
 		return mockHash, "v4.1.0", nil
 	})
