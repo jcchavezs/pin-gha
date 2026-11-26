@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -541,14 +542,14 @@ func TestResolveCommitHashWithExecer(t *testing.T) {
 			RunFn: func(_ context.Context, _ string, args ...string) (iteratorexec.Result, error) {
 				switch args[0] {
 				case "rev-list":
-					if args[len(args)-1] == "v4" {
-						// first attempt: version not found as a direct tag
-						return iteratorexec.Result{ExitCode: 1}, nil
+					if args[len(args)-1] == "refs/tags/v4.1.0" {
+						return iteratorexec.Result{Stdout: mockHash + "\n", ExitCode: 0}, nil
 					}
-					// second attempt after tag expansion: v4.1.0 found
-					return iteratorexec.Result{Stdout: mockHash + "\n", ExitCode: 0}, nil
+					// the floating ref does not exist as a tag nor as a branch
+					return iteratorexec.Result{ExitCode: 1}, nil
 				case "tag":
-					return iteratorexec.Result{Stdout: "v4.0.0\nv4.1.0", ExitCode: 0}, nil
+					// git sorts by version in descending order
+					return iteratorexec.Result{Stdout: "v4.1.0\nv4.0.0\nv4.0.0-beta.1\n", ExitCode: 0}, nil
 				default:
 					return iteratorexec.Result{}, fmt.Errorf("unexpected git sub-command: %v", args)
 				}
@@ -558,6 +559,49 @@ func TestResolveCommitHashWithExecer(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, mockHash, hash)
 		require.Equal(t, "v4.1.0", resolvedVersion)
+	})
+
+	t.Run("existing floating tag keeps its commit and is named after the release at it", func(t *testing.T) {
+		var tagArgs []string
+		xr := mock.Execer{
+			RunXFn: func(_ context.Context, _ string, _ ...string) (string, error) {
+				return "", nil
+			},
+			RunFn: func(_ context.Context, _ string, args ...string) (iteratorexec.Result, error) {
+				switch args[0] {
+				case "rev-list":
+					require.Equal(t, "refs/tags/v4", args[len(args)-1])
+					return iteratorexec.Result{Stdout: mockHash + "\n", ExitCode: 0}, nil
+				case "tag":
+					tagArgs = args
+					return iteratorexec.Result{Stdout: "v4.2.2\n", ExitCode: 0}, nil
+				default:
+					return iteratorexec.Result{}, fmt.Errorf("unexpected git sub-command: %v", args)
+				}
+			},
+		}
+		hash, resolvedVersion, err := resolveCommitHashForVersion(t.Context(), xr, "v4")
+		require.NoError(t, err)
+		require.Equal(t, mockHash, hash)
+		require.Equal(t, "v4.2.2", resolvedVersion)
+		require.Equal(t, []string{"tag", "--list", "--sort=-version:refname", "v4.*", "--points-at", mockHash}, tagArgs)
+	})
+
+	t.Run("floating tag without a release at its commit keeps the floating ref", func(t *testing.T) {
+		xr := mock.Execer{
+			RunXFn: func(_ context.Context, _ string, _ ...string) (string, error) {
+				return "", nil
+			},
+			RunFn: func(_ context.Context, _ string, args ...string) (iteratorexec.Result, error) {
+				if args[0] == "rev-list" {
+					return iteratorexec.Result{Stdout: mockHash + "\n", ExitCode: 0}, nil
+				}
+				return iteratorexec.Result{}, nil
+			},
+		}
+		_, resolvedVersion, err := resolveCommitHashForVersion(t.Context(), xr, "v4")
+		require.NoError(t, err)
+		require.Equal(t, "v4", resolvedVersion)
 	})
 
 	t.Run("rev-list misses short version tag list empty returns error", func(t *testing.T) {
@@ -787,5 +831,71 @@ func TestPatchLocalRepositoryFSReusableWorkflows(t *testing.T) {
 		fs := afero.NewMemMapFs()
 		setupWorkflow(t, fs, "jobs:\n  call:\n    uses: other-org/shared/.github/workflows/build.yml\n")
 		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+	})
+}
+
+// TestResolveCommitHashForVersionRealGit runs the resolution against a real repository, as the
+// ordering and matching of tags is git behaviour that mocks cannot prove.
+func TestResolveCommitHashForVersionRealGit(t *testing.T) {
+	git := func(t *testing.T, dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.CommandContext(t.Context(), "git", append([]string{
+			"-c", "user.name=test", "-c", "user.email=test@example.com",
+			"-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false",
+		}, args...)...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(out))
+		return strings.TrimSpace(string(out))
+	}
+
+	// release creates a commit and tags it with the given tags, returning its hash.
+	release := func(t *testing.T, dir string, tags ...string) string {
+		t.Helper()
+		git(t, dir, "commit", "--allow-empty", "-m", strings.Join(tags, ","))
+		for _, tag := range tags {
+			git(t, dir, "tag", "-f", tag)
+		}
+		return git(t, dir, "rev-parse", "HEAD")
+	}
+
+	// A history in which alphabetical order disagrees with version order.
+	origin := t.TempDir()
+	git(t, origin, "init", "-q", "-b", "main")
+	v12 := release(t, origin, "v1.2.0", "v1.2")
+	release(t, origin, "v1.42.0")
+	v1100 := release(t, origin, "v1.100.0", "v1")
+	v10 := release(t, origin, "v10.0.0")
+	release(t, origin, "v1-beta")
+	// there is no floating tag for v4, so it has to be searched
+	release(t, origin, "v4.2.2")
+	v410 := release(t, origin, "v4.10.0")
+
+	clone := t.TempDir()
+	git(t, clone, "clone", "-q", origin, ".")
+
+	tests := []struct {
+		name        string
+		version     string
+		wantHash    string
+		wantVersion string
+	}{
+		{"floating tag keeps its commit and is named after its release", "v1", v1100, "v1.100.0"},
+		{"floating minor tag", "v1.2", v12, "v1.2.0"},
+		{"searched floating ref picks the highest version, not the last alphabetically", "v4", v410, "v4.10.0"},
+		{"searched floating ref does not match other majors", "v10", v10, "v10.0.0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hash, resolvedVersion, err := resolveCommitHashForVersion(t.Context(), iteratorexec.NewExecer(clone), tt.version)
+			require.NoError(t, err)
+			require.Equal(t, tt.wantHash, hash)
+			require.Equal(t, tt.wantVersion, resolvedVersion)
+		})
+	}
+
+	t.Run("a floating ref with no release tags is unresolved", func(t *testing.T) {
+		_, _, err := resolveCommitHashForVersion(t.Context(), iteratorexec.NewExecer(clone), "v2")
+		require.ErrorIs(t, err, errUnresolvedVersion)
 	})
 }

@@ -486,23 +486,76 @@ func resolveCommitHashForVersion(ctx context.Context, xr iteratorexec.Execer, ve
 		return getLastReachableCommit(ctx, xr, version)
 	}
 
-	targetRef := version
+	// Floating refs such as "v4" or "v1.2" usually exist as a tag or a branch, in which case we
+	// keep the commit they point to today instead of guessing which release tag is the latest.
+	for _, ref := range []string{"refs/tags/" + version, version} {
+		hash, _, err := getLastReachableCommit(ctx, xr, ref)
+		if errors.Is(err, errUnresolvedVersion) {
+			continue
+		} else if err != nil {
+			return "", "", err
+		}
 
-	// If the version is not a branch or tag, try to find the most recent tag that starts with the version string. This covers cases where the version is something like "v1" or "v1.2" and the actual tags are "v1.0.0", "v1.1.0", "v1.2.0", etc.
-	res, err := xr.Run(ctx, "git", "tag", "--list", fmt.Sprintf("%s*", version))
+		resolvedVersion, err := releaseTagAt(ctx, xr, hash, version)
+		return hash, resolvedVersion, err
+	}
+
+	// Otherwise, we look for the highest release tag that starts with the version, e.g. "v1.2.0",
+	// "v1.3.0" for "v1".
+	tag, err := latestReleaseTag(ctx, xr, "", version)
 	if err != nil {
-		return "", "", fmt.Errorf("listing tags: %w", err)
-	} else {
-		tags := strings.TrimSpace(res.Stdout)
-		if res.ExitCode == 0 && tags != "" {
-			xr.Log(ctx, slog.LevelDebug, "Found candidate versions", "versions", strings.Split(tags, "\n"))
-			lastIndex := strings.LastIndex(tags, "\n")
-			targetRef = tags[lastIndex+1:]
+		return "", "", err
+	} else if tag == "" {
+		return "", "", errUnresolvedVersion
+	}
+
+	hash, _, err := getLastReachableCommit(ctx, xr, "refs/tags/"+tag)
+	return hash, tag, err
+}
+
+// releaseTagRe matches the release tags we pin to, that is full semver tags without pre-release
+// or build metadata.
+var releaseTagRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+
+// releaseTagAt returns the highest release tag under the version prefix pointing at the commit,
+// or the version itself if the commit has none.
+func releaseTagAt(ctx context.Context, xr iteratorexec.Execer, hash, version string) (string, error) {
+	tag, err := latestReleaseTag(ctx, xr, hash, version)
+	if err != nil {
+		return "", err
+	} else if tag == "" {
+		return version, nil
+	}
+
+	return tag, nil
+}
+
+// latestReleaseTag returns the highest release tag under the version prefix (e.g. "v1.*" for
+// "v1"), optionally limited to the tags pointing at the commit. It returns an empty string if
+// there is none.
+func latestReleaseTag(ctx context.Context, xr iteratorexec.Execer, hash, version string) (string, error) {
+	// The dot anchors the prefix so "v1" does not match "v10.0.0" or "v1-beta".
+	args := []string{"tag", "--list", "--sort=-version:refname", version + ".*"}
+	if hash != "" {
+		args = append(args, "--points-at", hash)
+	}
+
+	res, err := xr.Run(ctx, "git", args...)
+	if err != nil {
+		return "", fmt.Errorf("listing tags: %w", err)
+	} else if res.ExitCode != 0 {
+		return "", nil
+	}
+
+	tags := strings.Fields(res.Stdout)
+	xr.Log(ctx, slog.LevelDebug, "Found candidate versions", "versions", tags)
+	for _, tag := range tags {
+		if releaseTagRe.MatchString(tag) {
+			return tag, nil
 		}
 	}
 
-	// We try to resolve the version even if we didn't find any matching tags, just in case the version is a branch
-	return getLastReachableCommit(ctx, xr, targetRef)
+	return "", nil
 }
 
 // getLastReachableCommit tries to resolve the given version as a branch or tag name and returns the corresponding commit hash.

@@ -109,5 +109,6 @@ Global flags:
 - Reusable workflows called with a job-level `uses:` (e.g. `org/repo/.github/workflows/build.yml@v1`) are pinned like any other action.
 - Local actions (prefixed with `./`) are skipped.
 - Docker image actions (prefixed with `docker://`) are skipped, see [#29](https://github.com/jcchavezs/pin-gha/issues/29).
-- Actions pinned to a branch (`main`, `master`) or a non-full semver tag (`v1`, `v1.2`) get a `# TODO: use a release instead` comment in addition to the hash.
+- A floating tag (`v1`, `v1.2`) is pinned to the commit it points to today and commented with the release tag at that commit (e.g. `# v1.100.0`). If the tag does not exist, the highest release tag starting with `v1.` is used.
+- Actions pinned to a branch (`main`, `master`) or to a floating tag without a release tag at its commit get a `# TODO: use a release instead` comment in addition to the hash.
 - When a version cannot be resolved, the original reference is preserved with a TODO comment.
