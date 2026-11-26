@@ -58,6 +58,14 @@ Pass `--exit-code` to make the command exit with code `2` when it changed any wo
 pin-gha local-repository --exit-code . || { echo "Workflow actions are not pinned"; exit 1; }
 ```
 
+### Pin action definitions (opt-in)
+
+By default only `.github/workflows` is processed. Pass `--include-actions` (available in `local-repository`, `repository` and `organization`) to also pin the `uses` of composite action steps in `action.yml`/`action.yaml` files, both in the repository root and in `.github/actions/*/`.
+
+```sh
+pin-gha local-repository --include-actions .
+```
+
 ### Resolve a single action
 
 Prints the commit hash for a specific action and version without modifying any files.
@@ -85,6 +93,7 @@ The `repository` and `organization` subcommands share the following flags:
 | `--pr-body-path` | _(built-in template)_                              | Path to a file whose content is used as the PR body                                |
 | `--trusted-org`  |                                                    | Comma-separated list of GitHub organisations whose actions are left untouched      |
 | `--dry-run`      | `false`                                            | Print the changes that would be made without pushing, forking or creating PRs      |
+| `--include-actions` | `false`                                         | Also pin `uses` in `action.yml`/`action.yaml` action definitions                   |
 | `--pr-commit-msg`| `chore(security): uses pinned versions of actions` | Commit message used when committing pinned actions                                 |
 
 Global flags:

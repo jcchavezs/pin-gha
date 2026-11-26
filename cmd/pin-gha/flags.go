@@ -5,14 +5,15 @@ import (
 )
 
 var patchFlags struct {
-	prBranch      string
-	prTitle       string
-	prBodyPath    string
-	prCommitMsg   string
-	prTrustedOrgs []string
-	prFork        bool
-	dryRun        bool
-	exitCode      bool
+	prBranch       string
+	prTitle        string
+	prBodyPath     string
+	prCommitMsg    string
+	prTrustedOrgs  []string
+	prFork         bool
+	dryRun         bool
+	exitCode       bool
+	includeActions bool
 }
 
 func init() {
@@ -25,6 +26,10 @@ func init() {
 	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd, localRepositoryCmd)
 
 	localRepositoryCmd.Flags().BoolVar(&patchFlags.exitCode, "exit-code", false, "Exit with code 2 if any workflow file was changed (files are still updated in place)")
+
+	localRepositoryCmd.Flags().BoolVar(&patchFlags.includeActions, "include-actions", false, "Also pin the actions used in action definitions (action.yml/action.yaml in the root and .github/actions/*)")
+	repositoryCmd.Flags().BoolVar(&patchFlags.includeActions, "include-actions", false, "Also pin the actions used in action definitions (action.yml/action.yaml in the root and .github/actions/*)")
+	organizationCmd.Flags().BoolVar(&patchFlags.includeActions, "include-actions", false, "Also pin the actions used in action definitions (action.yml/action.yaml in the root and .github/actions/*)")
 
 	repositoryCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-gh-actions", "Branch name used when creating or updating PRs")
 	repositoryCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")
