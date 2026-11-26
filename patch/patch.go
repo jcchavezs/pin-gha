@@ -24,7 +24,9 @@ import (
 type workflow struct {
 	Name string `yaml:"name"`
 	Jobs map[string]struct {
-		Name  string `yaml:"name"`
+		Name string `yaml:"name"`
+		// Uses is only present in jobs calling a reusable workflow.
+		Uses  string `yaml:"uses"`
 		Steps []struct {
 			Name string `yaml:"name"`
 			Uses string `yaml:"uses"`
@@ -190,18 +192,19 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 			return changed, fmt.Errorf("unmarshalling workflow %q: %v", workflowPath, err)
 		}
 
-		type step = struct {
-			Name string `yaml:"name"`
-			Uses string `yaml:"uses"`
-		}
-		var allSteps []step
+		var allUses []string
 		for _, job := range wf.Jobs {
-			allSteps = append(allSteps, job.Steps...)
+			allUses = append(allUses, job.Uses)
+			for _, step := range job.Steps {
+				allUses = append(allUses, step.Uses)
+			}
 		}
-		allSteps = append(allSteps, wf.Runs.Steps...)
+		for _, step := range wf.Runs.Steps {
+			allUses = append(allUses, step.Uses)
+		}
 
-		for _, step := range allSteps {
-			uses := strings.TrimSpace(step.Uses)
+		for _, use := range allUses {
+			uses := strings.TrimSpace(use)
 			if uses == "" {
 				continue
 			}

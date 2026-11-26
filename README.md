@@ -106,6 +106,7 @@ Global flags:
 
 - Actions already pinned to a full commit hash (40 hex characters) are left untouched.
 - Actions from trusted organisations are skipped.
+- Reusable workflows called with a job-level `uses:` (e.g. `org/repo/.github/workflows/build.yml@v1`) are pinned like any other action.
 - Local actions (prefixed with `./`) are skipped.
 - Docker image actions (prefixed with `docker://`) are skipped, see [#29](https://github.com/jcchavezs/pin-gha/issues/29).
 - Actions pinned to a branch (`main`, `master`) or a non-full semver tag (`v1`, `v1.2`) get a `# TODO: use a release instead` comment in addition to the hash.
