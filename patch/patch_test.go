@@ -709,3 +709,83 @@ func TestPatchFSActionDefinitions(t *testing.T) {
 		require.Contains(t, string(b), "actions/checkout@"+mockHash+" # v4.1.0")
 	})
 }
+
+func TestPatchLocalRepositoryFSReusableWorkflows(t *testing.T) {
+	const (
+		calledHash = "1111111111111111111111111111111111111111"
+		pinnedHash = "2222222222222222222222222222222222222222"
+	)
+
+	tests := []struct {
+		name        string
+		uses        string
+		trustedOrgs []string
+		want        string
+	}{
+		{
+			name: "third party reusable workflow is pinned",
+			uses: "other-org/shared/.github/workflows/build.yml@v1",
+			want: "other-org/shared/.github/workflows/build.yml@" + calledHash + " # v1.4.0",
+		},
+		{
+			name:        "trusted org reusable workflow is skipped",
+			uses:        "jcchavezs/shared/.github/workflows/build.yml@v1",
+			trustedOrgs: []string{"jcchavezs"},
+			want:        "jcchavezs/shared/.github/workflows/build.yml@v1",
+		},
+		{
+			name: "local reusable workflow is skipped",
+			uses: "./.github/workflows/build.yml",
+			want: "./.github/workflows/build.yml",
+		},
+		{
+			name: "already pinned reusable workflow is skipped",
+			uses: "other-org/shared/.github/workflows/build.yml@" + pinnedHash,
+			want: "other-org/shared/.github/workflows/build.yml@" + pinnedHash,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fs := afero.NewMemMapFs()
+			content := "jobs:\n  build:\n    uses: %s\n    secrets: inherit\n"
+			setupWorkflow(t, fs, fmt.Sprintf(content, tt.uses))
+			withMockResolver(t, func(_ context.Context, action, version string) (string, string, error) {
+				if action == "other-org/shared/.github/workflows/build.yml" && version == "v1" {
+					return calledHash, "v1.4.0", nil
+				}
+				return "", "", fmt.Errorf("unexpected: %s@%s", action, version)
+			})
+
+			changed, err := patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, tt.trustedOrgs)
+			require.NoError(t, err)
+			require.Equal(t, fmt.Sprintf(content, tt.want), readWorkflowContent(t, fs))
+			require.Equal(t, tt.want != tt.uses, len(changed) == 1)
+		})
+	}
+
+	t.Run("reusable workflow and step actions are pinned together", func(t *testing.T) {
+		fs := afero.NewMemMapFs()
+		setupWorkflow(t, fs, "jobs:\n  call:\n    uses: other-org/shared/.github/workflows/build.yml@v1\n  test:\n    steps:\n      - uses: actions/checkout@v4\n")
+		withMockResolver(t, func(_ context.Context, action, _ string) (string, string, error) {
+			if action == "actions/checkout" {
+				return pinnedHash, "v4.2.0", nil
+			}
+			return calledHash, "v1.4.0", nil
+		})
+
+		changed, err := patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil)
+		require.NoError(t, err)
+		require.Equal(t, []string{".github/workflows/ci.yml"}, changed)
+
+		got := readWorkflowContent(t, fs)
+		require.Contains(t, got, "uses: other-org/shared/.github/workflows/build.yml@"+calledHash+" # v1.4.0\n")
+		require.Contains(t, got, "- uses: actions/checkout@"+pinnedHash+" # v4.2.0\n")
+	})
+
+	t.Run("reusable workflow without version returns error", func(t *testing.T) {
+		fs := afero.NewMemMapFs()
+		setupWorkflow(t, fs, "jobs:\n  call:\n    uses: other-org/shared/.github/workflows/build.yml\n")
+		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+	})
+}
