@@ -23,13 +23,13 @@ func init() {
 		"Sets the log level",
 	)
 
-	rootCmd.AddCommand(repositoryCmd, organizationCmd, actionCmd, localRepositoryCmd)
+	rootCmd.AddCommand(repositoryCmd, ownerCmd, actionCmd, localRepositoryCmd)
 
 	localRepositoryCmd.Flags().BoolVar(&patchFlags.exitCode, "exit-code", false, "Exit with code 2 if any workflow file was changed (files are still updated in place)")
 
 	localRepositoryCmd.Flags().BoolVar(&patchFlags.includeActions, "include-actions", false, "Also pin the actions used in action definitions (action.yml/action.yaml in the root and .github/actions/*)")
 	repositoryCmd.Flags().BoolVar(&patchFlags.includeActions, "include-actions", false, "Also pin the actions used in action definitions (action.yml/action.yaml in the root and .github/actions/*)")
-	organizationCmd.Flags().BoolVar(&patchFlags.includeActions, "include-actions", false, "Also pin the actions used in action definitions (action.yml/action.yaml in the root and .github/actions/*)")
+	ownerCmd.Flags().BoolVar(&patchFlags.includeActions, "include-actions", false, "Also pin the actions used in action definitions (action.yml/action.yaml in the root and .github/actions/*)")
 
 	repositoryCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-gh-actions", "Branch name used when creating or updating PRs")
 	repositoryCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")
@@ -38,10 +38,10 @@ func init() {
 	repositoryCmd.Flags().BoolVar(&patchFlags.prFork, "fork", false, "Whether to fork the repository when creating the PR")
 	repositoryCmd.Flags().BoolVar(&patchFlags.dryRun, "dry-run", false, "Show the changes that would be made without pushing or creating PRs")
 
-	organizationCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-gh-actions", "Branch name used when creating or updating PRs")
-	organizationCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")
-	organizationCmd.Flags().StringSliceVar(&patchFlags.prTrustedOrgs, "trusted-org", nil, "Comma-separated list of GitHub organisations whose actions are left untouched")
-	organizationCmd.Flags().StringVar(&patchFlags.prCommitMsg, "pr-commit-msg", "chore(security): uses pinned versions of actions", "Commit message used when committing the pinned actions")
-	organizationCmd.Flags().BoolVar(&patchFlags.prFork, "fork", false, "Whether to fork the repository when creating the PR")
-	organizationCmd.Flags().BoolVar(&patchFlags.dryRun, "dry-run", false, "Show the changes that would be made without pushing or creating PRs")
+	ownerCmd.Flags().StringVar(&patchFlags.prBranch, "pr-branch", "pin-gh-actions", "Branch name used when creating or updating PRs")
+	ownerCmd.Flags().StringVar(&patchFlags.prBodyPath, "pr-body-path", "", "Path to a file whose content is used as the PR body (defaults to the built-in template)")
+	ownerCmd.Flags().StringSliceVar(&patchFlags.prTrustedOrgs, "trusted-org", nil, "Comma-separated list of GitHub organisations whose actions are left untouched")
+	ownerCmd.Flags().StringVar(&patchFlags.prCommitMsg, "pr-commit-msg", "chore(security): uses pinned versions of actions", "Commit message used when committing the pinned actions")
+	ownerCmd.Flags().BoolVar(&patchFlags.prFork, "fork", false, "Whether to fork the repository when creating the PR")
+	ownerCmd.Flags().BoolVar(&patchFlags.dryRun, "dry-run", false, "Show the changes that would be made without pushing or creating PRs")
 }

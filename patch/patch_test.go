@@ -39,8 +39,8 @@ func TestCheckCommandExist(t *testing.T) {
 func TestMissingCommands(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 
-	t.Run("Organization returns error", func(t *testing.T) {
-		err := Organization(context.Background(), "org", PatchOptions{})
+	t.Run("Owner returns error", func(t *testing.T) {
+		err := Owner(context.Background(), "org", PatchOptions{})
 		require.ErrorContains(t, err, "failed to find")
 	})
 

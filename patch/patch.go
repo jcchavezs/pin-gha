@@ -61,15 +61,15 @@ func checkCommandExist(name string) error {
 	return nil
 }
 
-// Organization processes all repositories in the given organization.
-func Organization(ctx context.Context, orgName string, opts PatchOptions) error {
+// Owner processes all repositories of the given owner (user or organization).
+func Owner(ctx context.Context, owner string, opts PatchOptions) error {
 	if err := checkRequiredCommands(); err != nil {
 		return err
 	}
 
 	opts = opts.withDefaults()
 
-	_, err := iterator.RunForOrganization(ctx, orgName, iterator.SearchOptions{
+	_, err := iterator.RunForOwner(ctx, owner, iterator.SearchOptions{
 		ArchiveCondition: iterator.OmitArchived,
 		SizeCondition:    iterator.NotEmpty,
 		Source:           iterator.OnlyNonForks,
