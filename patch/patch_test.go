@@ -396,11 +396,16 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		require.Equal(t, content, readWorkflowContent(t, fs))
 	})
 
-	t.Run("missing version returns error", func(t *testing.T) {
+	t.Run("missing version pins the default branch", func(t *testing.T) {
+		withMockResolver(t, func(_ context.Context, action, version string) (string, string, error) {
+			require.Equal(t, "actions/checkout", action)
+			require.Empty(t, version)
+			return mockHash, "main", nil
+		})
 		fs := afero.NewMemMapFs()
-		const content = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout\n"
-		setupWorkflow(t, fs, content)
-		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		setupWorkflow(t, fs, "jobs:\n  build:\n    steps:\n      - uses: actions/checkout\n")
+		require.NoError(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.Contains(t, readWorkflowContent(t, fs), "- uses: actions/checkout@"+mockHash+" # main on ")
 	})
 
 	t.Run("stable release is pinned with hash and version comment", func(t *testing.T) {
@@ -482,6 +487,23 @@ func TestPatchLocalRepositoryFS(t *testing.T) {
 		})
 		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
 	})
+}
+
+func TestPatchLocalRepositoryFSSkipsSameRepositoryUses(t *testing.T) {
+	withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
+		return mockHash, "v4.1.0", nil
+	})
+
+	fs := afero.NewMemMapFs()
+	setupWorkflow(t, fs, "jobs:\n  build:\n    steps:\n      - uses: $/.github/actions/foo\n      - uses: actions/checkout@v4.1.0\n")
+
+	changed, err := patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{".github/workflows/ci.yml"}, changed)
+
+	content := readWorkflowContent(t, fs)
+	require.Contains(t, content, "- uses: $/.github/actions/foo\n")
+	require.Contains(t, content, "actions/checkout@"+mockHash+" # v4.1.0")
 }
 
 func TestPatchLocalRepositoryFSSharedVersionPrefix(t *testing.T) {
@@ -880,10 +902,14 @@ func TestPatchLocalRepositoryFSReusableWorkflows(t *testing.T) {
 		require.Contains(t, got, "- uses: actions/checkout@"+pinnedHash+" # v4.2.0\n")
 	})
 
-	t.Run("reusable workflow without version returns error", func(t *testing.T) {
+	t.Run("reusable workflow without version pins the default branch", func(t *testing.T) {
+		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
+			return calledHash, "main", nil
+		})
 		fs := afero.NewMemMapFs()
 		setupWorkflow(t, fs, "jobs:\n  call:\n    uses: other-org/shared/.github/workflows/build.yml\n")
-		require.Error(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.NoError(t, patchLocalRepositoryFSErr(t.Context(), slog.New(slog.DiscardHandler), fs, nil))
+		require.Contains(t, readWorkflowContent(t, fs), "uses: other-org/shared/.github/workflows/build.yml@"+calledHash+" # main on ")
 	})
 }
 
@@ -937,6 +963,7 @@ func TestResolveCommitHashForVersionRealGit(t *testing.T) {
 		{"floating minor tag", "v1.2", v12, "v1.2.0"},
 		{"searched floating ref picks the highest version, not the last alphabetically", "v4", v410, "v4.10.0"},
 		{"searched floating ref does not match other majors", "v10", v10, "v10.0.0"},
+		{"no version resolves the default branch", "", v410, "main"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
