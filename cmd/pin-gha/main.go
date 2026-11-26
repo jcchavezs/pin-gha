@@ -53,12 +53,13 @@ var repositoryCmd = &cobra.Command{
 		}
 
 		return patch.Repository(cmd.Context(), args[0], patch.PatchOptions{
-			TargetBranch: patchFlags.prBranch,
-			PRBody:       prBody,
-			TrustedOrgs:  patchFlags.prTrustedOrgs,
-			CommitMsg:    patchFlags.prCommitMsg,
-			NeedsFork:    patchFlags.prFork,
-			DryRun:       patchFlags.dryRun,
+			TargetBranch:             patchFlags.prBranch,
+			PRBody:                   prBody,
+			TrustedOrgs:              patchFlags.prTrustedOrgs,
+			CommitMsg:                patchFlags.prCommitMsg,
+			NeedsFork:                patchFlags.prFork,
+			DryRun:                   patchFlags.dryRun,
+			IncludeActionDefinitions: patchFlags.includeActions,
 			OnDryRunChanges: func(ctx context.Context, repo string, d patch.DryRunDetails) {
 				cmd.Printf("Dry run: repository %q would be updated (branch %q):\n%s\n", repo, d.Branch, d.Diff)
 			},
@@ -85,12 +86,13 @@ var organizationCmd = &cobra.Command{
 		}
 
 		return patch.Organization(cmd.Context(), args[0], patch.PatchOptions{
-			TargetBranch: patchFlags.prBranch,
-			PRBody:       prBody,
-			TrustedOrgs:  patchFlags.prTrustedOrgs,
-			CommitMsg:    patchFlags.prCommitMsg,
-			NeedsFork:    patchFlags.prFork,
-			DryRun:       patchFlags.dryRun,
+			TargetBranch:             patchFlags.prBranch,
+			PRBody:                   prBody,
+			TrustedOrgs:              patchFlags.prTrustedOrgs,
+			CommitMsg:                patchFlags.prCommitMsg,
+			NeedsFork:                patchFlags.prFork,
+			DryRun:                   patchFlags.dryRun,
+			IncludeActionDefinitions: patchFlags.includeActions,
 			OnDryRunChanges: func(ctx context.Context, repo string, d patch.DryRunDetails) {
 				cmd.Printf("Dry run: repository %q would be updated (branch %q):\n%s\n", repo, d.Branch, d.Diff)
 			},
@@ -133,6 +135,7 @@ var localRepositoryCmd = &cobra.Command{
 
 		var changed []string
 		err := patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{
+			IncludeActionDefinitions: patchFlags.includeActions,
 			OnFileChanged: func(_ context.Context, file string) {
 				changed = append(changed, file)
 				cmd.Printf("Pinned actions in %s\n", file)
