@@ -248,7 +248,8 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 				continue
 			}
 
-			if strings.HasPrefix(uses, "./") {
+			// "$/" references an action in the same repository at the running commit so there is nothing to pin.
+			if strings.HasPrefix(uses, "./") || strings.HasPrefix(uses, "$/") {
 				wfLogger.Debug("Skipping local action", "uses", uses)
 				//if exists, _ := afero.Exists(fs, uses); exists {
 				// local action
@@ -265,7 +266,8 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 			pkg, version, _ := strings.Cut(uses, "@")
 
 			if version == "" {
-				return changed, fmt.Errorf("no version specified for action %s in %q", pkg, workflowPath)
+				// GitHub runs the default branch when no version is given, so we pin its latest commit.
+				wfLogger.Warn("No version specified for action, pinning the latest commit of the default branch", "uses", uses)
 			}
 
 			if len(version) == 40 { // commit hash length
@@ -503,6 +505,21 @@ func resolveCommitHashInRepository(ctx context.Context, repository iterator.Repo
 func resolveCommitHashForVersion(ctx context.Context, xr iteratorexec.Execer, version string) (string, string, error) {
 	if _, err := xr.RunX(ctx, "git", "fetch", "--tags"); err != nil {
 		return "", "", fmt.Errorf("fetching tags: %w", err)
+	}
+
+	// Without a version GitHub runs the default branch, so we resolve its latest commit.
+	if version == "" {
+		hash, _, err := getLastReachableCommit(ctx, xr, "HEAD")
+		if err != nil {
+			return "", "", err
+		}
+
+		branch, err := xr.RunX(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return "", "", fmt.Errorf("getting default branch: %w", err)
+		}
+
+		return hash, strings.TrimSpace(branch), nil
 	}
 
 	// If the version looks like a full semver (i.e. has three dot-separated parts), we try directly
