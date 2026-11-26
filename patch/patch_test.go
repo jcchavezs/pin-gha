@@ -899,3 +899,43 @@ func TestResolveCommitHashForVersionRealGit(t *testing.T) {
 		require.ErrorIs(t, err, errUnresolvedVersion)
 	})
 }
+
+func TestRetry(t *testing.T) {
+	boom := errors.New("boom")
+
+	t.Run("succeeds after transient errors", func(t *testing.T) {
+		calls := 0
+		err := retry(t.Context(), 3, 0, func() error {
+			calls++
+			if calls < 3 {
+				return boom
+			}
+			return nil
+		})
+		require.NoError(t, err)
+		require.Equal(t, 3, calls)
+	})
+
+	t.Run("returns the last error after all attempts", func(t *testing.T) {
+		calls := 0
+		err := retry(t.Context(), 3, 0, func() error { calls++; return boom })
+		require.ErrorIs(t, err, boom)
+		require.Equal(t, 3, calls)
+	})
+
+	t.Run("does not retry an unresolved version", func(t *testing.T) {
+		calls := 0
+		err := retry(t.Context(), 3, 0, func() error { calls++; return errUnresolvedVersion })
+		require.ErrorIs(t, err, errUnresolvedVersion)
+		require.Equal(t, 1, calls)
+	})
+
+	t.Run("stops when the context is done", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		calls := 0
+		err := retry(ctx, 3, time.Hour, func() error { calls++; return boom })
+		require.ErrorIs(t, err, boom)
+		require.Equal(t, 1, calls)
+	})
+}

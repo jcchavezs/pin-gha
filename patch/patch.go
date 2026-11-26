@@ -275,7 +275,7 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 			case errUnresolvedVersion:
 				newUses = fmt.Sprintf("%s@%s # TODO: use a release instead", pkg, version)
 			default:
-				return changed, fmt.Errorf("getting commit hash: %v", err)
+				return changed, fmt.Errorf("getting commit hash: %w", err)
 			}
 
 			wfb = replaceUses(wfb, uses, newUses)
@@ -448,18 +448,52 @@ func ResolveCommitHashForAction(ctx context.Context, action, version string) (st
 	var (
 		hash            string
 		resolvedVersion string
-		err             error
 	)
-	err = iterator.RunForRepository(ctx, actionRepo, func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
-		hash, resolvedVersion, err = resolveCommitHashInRepository(ctx, repository, xr, version)
-		return err
-	}, iterator.Options{
-		UseHTTPS:      true,
-		CloningSubset: []string{"README.md"},
-		LogHandler:    slog.Default().Handler(),
+	// Cloning the action repository may fail for transient reasons, e.g. when many
+	// repositories are processed in parallel.
+	err := retry(ctx, resolveAttempts, resolveRetryDelay, func() error {
+		return iterator.RunForRepository(ctx, actionRepo, func(ctx context.Context, repository iterator.Repository, xr iteratorexec.Execer) error {
+			var err error
+			hash, resolvedVersion, err = resolveCommitHashInRepository(ctx, repository, xr, version)
+			return err
+		}, iterator.Options{
+			UseHTTPS:      true,
+			CloningSubset: []string{"README.md"},
+			LogHandler:    slog.Default().Handler(),
+		})
 	})
 
 	return hash, resolvedVersion, err
+}
+
+const resolveAttempts = 3
+
+// resolveRetryDelay is the base delay between attempts, it is a variable so tests can shorten it.
+var resolveRetryDelay = time.Second
+
+// retry runs fn up to attempts times, waiting delay*attempt between attempts. It stops
+// early on success, on errUnresolvedVersion (which is a definitive answer) or if the
+// context is done.
+func retry(ctx context.Context, attempts int, delay time.Duration, fn func() error) error {
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if err = fn(); err == nil || errors.Is(err, errUnresolvedVersion) {
+			return err
+		}
+
+		if attempt == attempts {
+			break
+		}
+
+		slog.Debug("Retrying after error", "attempt", attempt, "error", err)
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(delay * time.Duration(attempt)):
+		}
+	}
+
+	return err
 }
 
 // resolveCommitHashInRepository resolves the version in the given repository, failing
