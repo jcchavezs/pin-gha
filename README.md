@@ -2,6 +2,8 @@
 
 A CLI tool and a library that pins GitHub Actions workflow steps to specific commit hashes, improving supply chain security by preventing tag mutation attacks.
 
+Besides `.github/workflows`, it also pins the `runs.steps[].uses` of composite actions defined in `.github/actions/*/action.yml` (or `action.yaml`).
+
 ![pinga](pinga.png)
 
 Before:

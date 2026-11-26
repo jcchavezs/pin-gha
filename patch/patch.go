@@ -21,15 +21,67 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type step struct {
+	Name string `yaml:"name"`
+	Uses string `yaml:"uses"`
+}
+
+// workflow represents either a workflow (jobs) or a composite action (runs).
 type workflow struct {
 	Name string `yaml:"name"`
 	Jobs map[string]struct {
 		Name  string `yaml:"name"`
-		Steps []struct {
-			Name string `yaml:"name"`
-			Uses string `yaml:"uses"`
-		} `yaml:"steps"`
+		Steps []step `yaml:"steps"`
 	} `yaml:"jobs"`
+	Runs struct {
+		Steps []step `yaml:"steps"`
+	} `yaml:"runs"`
+}
+
+// steps returns the steps of all jobs and of the composite action, if any.
+func (w workflow) steps() []step {
+	var all []step
+	for _, job := range w.Jobs {
+		all = append(all, job.Steps...)
+	}
+	return append(all, w.Runs.Steps...)
+}
+
+// yamlFilePaths returns the workflow files under .github/workflows and the
+// composite action files (action.yml/action.yaml) under .github/actions/*.
+func yamlFilePaths(fs afero.Fs) ([]string, error) {
+	var paths []string
+	isYAML := func(name string) bool {
+		return strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")
+	}
+
+	files, err := afero.ReadDir(fs, path.Join(".github", "workflows"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, file := range files {
+		if !file.IsDir() && isYAML(file.Name()) {
+			paths = append(paths, path.Join(".github", "workflows", file.Name()))
+		}
+	}
+
+	dirs, err := afero.ReadDir(fs, path.Join(".github", "actions"))
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, dir := range dirs {
+		if !dir.IsDir() {
+			continue
+		}
+		for _, name := range []string{"action.yml", "action.yaml"} {
+			p := path.Join(".github", "actions", dir.Name(), name)
+			if exists, _ := afero.Exists(fs, p); exists {
+				paths = append(paths, p)
+			}
+		}
+	}
+
+	return paths, nil
 }
 
 func init() {
@@ -62,7 +114,7 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 	}, iterator.Options{
 		UseHTTPS:      true,
 		LogHandler:    opts.LogHandler,
-		CloningSubset: []string{".github/workflows"},
+		CloningSubset: []string{".github/workflows", ".github/actions"},
 	})
 
 	return err
@@ -81,7 +133,7 @@ func Repository(ctx context.Context, repo string, opts PatchOptions) error {
 	}, iterator.Options{
 		UseHTTPS:      true,
 		LogHandler:    opts.LogHandler,
-		CloningSubset: []string{".github/workflows"},
+		CloningSubset: []string{".github/workflows", ".github/actions"},
 	})
 }
 
@@ -104,42 +156,30 @@ func LocalRepository(ctx context.Context, repoPath string, opts LocalPatchOption
 func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string) ([]string, error) {
 	var changed []string
 	today := time.Now().Format("2006-01-02")
-	files, err := afero.ReadDir(fs, path.Join(".github", "workflows"))
+	paths, err := yamlFilePaths(fs)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, err
 	}
 
-	if len(files) == 0 {
+	if len(paths) == 0 {
 		logger.Debug("No files found")
 	}
 
-	for _, file := range files {
-		if file.IsDir() {
-			continue
-		}
-
-		if !strings.HasSuffix(file.Name(), ".yml") && !strings.HasSuffix(file.Name(), ".yaml") {
-			continue
-		}
-
-		workflowPath := path.Join(".github", "workflows", file.Name())
+	for _, workflowPath := range paths {
 		original, err := afero.ReadFile(fs, workflowPath)
 		if err != nil {
 			return changed, err
 		}
 		wfb := original
 
-		wfLogger := logger.With("workflow", file.Name())
+		wfLogger := logger.With("workflow", workflowPath)
 		wf := workflow{}
 		if err := yaml.Unmarshal(wfb, &wf); err != nil {
-			return changed, fmt.Errorf("unmarshalling workflow %q: %v", file.Name(), err)
+			return changed, fmt.Errorf("unmarshalling workflow %q: %v", workflowPath, err)
 		}
 
-		for _, job := range wf.Jobs {
-			for _, step := range job.Steps {
+		{
+			for _, step := range wf.steps() {
 				uses := strings.TrimSpace(step.Uses)
 				if uses == "" {
 					continue
@@ -174,7 +214,7 @@ func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.F
 				pkg, version, _ := strings.Cut(uses, "@")
 
 				if version == "" {
-					return changed, fmt.Errorf("no version specified for action %s in %q", pkg, file.Name())
+					return changed, fmt.Errorf("no version specified for action %s in %q", pkg, workflowPath)
 				}
 
 				if len(version) == 40 { // commit hash length
@@ -266,7 +306,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repository iterat
 		return err
 	}
 
-	if err := github.AddFiles(ctx, xr, ".github/workflows"); err != nil {
+	if err := github.AddFiles(ctx, xr, ".github"); err != nil {
 		return err
 	}
 

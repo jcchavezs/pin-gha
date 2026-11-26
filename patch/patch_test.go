@@ -177,7 +177,7 @@ func TestPatchRepository_HasChanges_NewPR(t *testing.T) {
 
 	require.NoError(t, patchRepository(ctx, slog.New(slog.DiscardHandler), nonEmptyRepository, xr, PatchOptions{}.withDefaults()))
 	require.Equal(t, defaultTagetBranch, checkedOutBranch)
-	require.Equal(t, ".github/workflows", addedPath)
+	require.Equal(t, ".github", addedPath)
 	require.Equal(t, "chore(sec|gha): uses pinned versions of github actions", commitMessage)
 	require.Equal(t, defaultTagetBranch, pushedBranch)
 }
@@ -678,4 +678,27 @@ func TestPatchRepository_DryRun_NoChanges(t *testing.T) {
 
 	require.NoError(t, patchRepository(context.Background(), slog.New(slog.DiscardHandler), nonEmptyRepository, xr, opts))
 	require.Equal(t, SkippedReasonAlreadyPinned, skipped)
+}
+
+func TestPatchLocalRepositoryFS_CompositeActions(t *testing.T) {
+	withMockResolver(t, func(_ context.Context, action, version string) (string, string, error) {
+		return "0123456789012345678901234567890123456789", "v4.1.0", nil
+	})
+
+	fs := afero.NewMemMapFs()
+	const content = "name: x\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4\n"
+	require.NoError(t, fs.MkdirAll(".github/actions/a", 0755))
+	require.NoError(t, fs.MkdirAll(".github/actions/b", 0755))
+	require.NoError(t, afero.WriteFile(fs, ".github/actions/a/action.yml", []byte(content), 0644))
+	require.NoError(t, afero.WriteFile(fs, ".github/actions/b/action.yaml", []byte(content), 0644))
+
+	changed, err := patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{".github/actions/a/action.yml", ".github/actions/b/action.yaml"}, changed)
+
+	for _, p := range changed {
+		b, err := afero.ReadFile(fs, p)
+		require.NoError(t, err)
+		require.Contains(t, string(b), "actions/checkout@0123456789012345678901234567890123456789 # v4.1.0")
+	}
 }
