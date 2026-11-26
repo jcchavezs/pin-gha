@@ -89,10 +89,11 @@ The `repository` and `organization` subcommands share the following flags:
 
 | Flag             | Default                                            | Description                                                                        |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| `--pr-branch`    | `pin-actions`                                      | Branch name used when creating or updating PRs                                     |
+| `--pr-branch`    | `pin-gh-actions`                                   | Branch name used when creating or updating PRs                                     |
 | `--pr-body-path` | _(built-in template)_                              | Path to a file whose content is used as the PR body                                |
 | `--trusted-org`  |                                                    | Comma-separated list of GitHub organisations whose actions are left untouched      |
 | `--dry-run`      | `false`                                            | Print the changes that would be made without pushing, forking or creating PRs      |
+| `--fork`         | `false`                                            | Fork the repository and open the PR from the fork                                  |
 | `--include-actions` | `false`                                         | Also pin `uses` in `action.yml`/`action.yaml` action definitions                   |
 | `--pr-commit-msg`| `chore(security): uses pinned versions of actions` | Commit message used when committing pinned actions                                 |
 
