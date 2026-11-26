@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 
 	iteratorexec "github.com/jcchavezs/gh-iterator/exec"
 
@@ -164,6 +165,14 @@ type changesError struct {
 
 func (e *changesError) Error() string {
 	return fmt.Sprintf("%d workflow file(s) changed", len(e.files))
+}
+
+// stderrSuffix returns the stderr of the failed command, if any, to be appended to the error message.
+func stderrSuffix(err error) string {
+	if stderr, found := iteratorexec.StderrNotEmpty(iteratorexec.GetStderr(err)); found {
+		return "\n" + strings.TrimRight(stderr, "\n")
+	}
+	return ""
 }
 
 func main() {
