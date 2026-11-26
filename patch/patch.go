@@ -328,7 +328,8 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repository iterat
 		return nil
 	}
 
-	if _, err := patchFS(ctx, rLogger, xr.GenerateFS(), opts.TrustedOrgs, opts.IncludeActionDefinitions); err != nil {
+	fs := xr.GenerateFS()
+	if _, err := patchFS(ctx, rLogger, fs, opts.TrustedOrgs, opts.IncludeActionDefinitions); err != nil {
 		return err
 	}
 
@@ -350,6 +351,11 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repository iterat
 		addPaths = cloningSubset(opts)
 	}
 	for _, addPath := range addPaths {
+		// git add fails on a pathspec that does not exist, e.g. a repository without .github/actions.
+		if exists, _ := afero.Exists(fs, addPath); !exists {
+			continue
+		}
+
 		if err := github.AddFiles(ctx, xr, addPath); err != nil {
 			return err
 		}
