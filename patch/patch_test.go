@@ -899,3 +899,41 @@ func TestResolveCommitHashForVersionRealGit(t *testing.T) {
 		require.ErrorIs(t, err, errUnresolvedVersion)
 	})
 }
+
+func TestExplainOrganizationErr(t *testing.T) {
+	notFound := errors.New("fetching repositories: not found with status 404")
+
+	withOwnerType := func(t *testing.T, typ string, err error) {
+		t.Helper()
+		orig := ownerType
+		ownerType = func(context.Context, string) (string, error) { return typ, err }
+		t.Cleanup(func() { ownerType = orig })
+	}
+
+	t.Run("nil", func(t *testing.T) {
+		require.NoError(t, explainOrganizationErr(t.Context(), "org", nil))
+	})
+
+	t.Run("user", func(t *testing.T) {
+		withOwnerType(t, "User", nil)
+		err := explainOrganizationErr(t.Context(), "someone", notFound)
+		require.ErrorContains(t, err, `"someone" is a user, not an organization`)
+		require.ErrorContains(t, err, "pin-gha repository someone/<repository>")
+		require.ErrorIs(t, err, notFound)
+	})
+
+	t.Run("not found and not a user", func(t *testing.T) {
+		withOwnerType(t, "", errors.New("not found"))
+		require.Equal(t, notFound, explainOrganizationErr(t.Context(), "nobody", notFound))
+	})
+
+	t.Run("no repositories", func(t *testing.T) {
+		err := explainOrganizationErr(t.Context(), "empty-org", errors.New("no repositories to check cloneability"))
+		require.ErrorContains(t, err, `organization "empty-org" has no repositories to process`)
+	})
+
+	t.Run("other errors are untouched", func(t *testing.T) {
+		boom := errors.New("boom")
+		require.Equal(t, boom, explainOrganizationErr(t.Context(), "org", boom))
+	})
+}

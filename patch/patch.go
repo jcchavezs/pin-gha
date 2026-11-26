@@ -86,6 +86,33 @@ func Organization(ctx context.Context, orgName string, opts PatchOptions) error 
 		CloningSubset: cloningSubset(opts),
 	})
 
+	return explainOrganizationErr(ctx, orgName, err)
+}
+
+// ownerType returns the type of the GitHub account ("User" or "Organization"), it is
+// a variable so tests can inject a mock.
+var ownerType = func(ctx context.Context, name string) (string, error) {
+	out, err := exec.CommandContext(ctx, "gh", "api", "/users/"+name, "--jq", ".type").Output()
+	return strings.TrimSpace(string(out)), err
+}
+
+// explainOrganizationErr replaces the errors the iterator returns for the most common
+// mistakes (using a user or an organization without repositories) with an actionable message.
+func explainOrganizationErr(ctx context.Context, orgName string, err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if strings.Contains(err.Error(), "no repositories to check cloneability") {
+		return fmt.Errorf("organization %q has no repositories to process (archived repositories, forks and empty repositories are ignored): %w", orgName, err)
+	}
+
+	if strings.Contains(err.Error(), "404") {
+		if typ, tErr := ownerType(ctx, orgName); tErr == nil && typ == "User" {
+			return fmt.Errorf("%q is a user, not an organization, use 'pin-gha repository %s/<repository>' instead: %w", orgName, orgName, err)
+		}
+	}
+
 	return err
 }
 
