@@ -58,6 +58,10 @@ type PatchOptions struct {
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
 	// untouched.
 	TrustedOrgs []string
+	// IncludeActionDefinitions also pins the actions used in action definition
+	// files (action.yml/action.yaml in the repository root and in
+	// .github/actions/*). Disabled by default.
+	IncludeActionDefinitions bool
 	// CommitMsg is the commit message used when committing the pinned actions.
 	// Defaults to "chore(security): uses pinned versions of actions" when empty.
 	CommitMsg string
@@ -120,6 +124,11 @@ type LocalPatchOptions struct {
 	// TrustedOrgs is the list of GitHub organisations whose actions are left
 	// untouched.
 	TrustedOrgs []string
+
+	// IncludeActionDefinitions also pins the actions used in action definition
+	// files (action.yml/action.yaml in the repository root and in
+	// .github/actions/*). Disabled by default.
+	IncludeActionDefinitions bool
 
 	// LogHandler is a function that retrieves a slog.Handler from the context.
 	LogHandler slog.Handler

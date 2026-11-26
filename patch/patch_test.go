@@ -678,3 +678,34 @@ func TestPatchRepository_DryRun_NoChanges(t *testing.T) {
 	require.NoError(t, patchRepository(context.Background(), slog.New(slog.DiscardHandler), nonEmptyRepository, xr, opts))
 	require.Equal(t, SkippedReasonAlreadyPinned, skipped)
 }
+
+func TestPatchFSActionDefinitions(t *testing.T) {
+	const action = "name: x\nruns:\n  using: composite\n  steps:\n    - uses: actions/checkout@v4.1.0\n"
+	setup := func(t *testing.T) afero.Fs {
+		fs := afero.NewMemMapFs()
+		require.NoError(t, afero.WriteFile(fs, "action.yml", []byte(action), 0644))
+		require.NoError(t, afero.WriteFile(fs, ".github/actions/foo/action.yaml", []byte(action), 0644))
+		withMockResolver(t, func(_ context.Context, _, _ string) (string, string, error) {
+			return mockHash, "v4.1.0", nil
+		})
+		return fs
+	}
+
+	t.Run("ignored by default", func(t *testing.T) {
+		fs := setup(t)
+		changed, err := patchLocalRepositoryFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil)
+		require.NoError(t, err)
+		require.Empty(t, changed)
+		b, _ := afero.ReadFile(fs, "action.yml")
+		require.Equal(t, action, string(b))
+	})
+
+	t.Run("pinned when enabled", func(t *testing.T) {
+		fs := setup(t)
+		changed, err := patchFS(t.Context(), slog.New(slog.DiscardHandler), fs, nil, true)
+		require.NoError(t, err)
+		require.Equal(t, []string{"action.yml", ".github/actions/foo/action.yaml"}, changed)
+		b, _ := afero.ReadFile(fs, "action.yml")
+		require.Contains(t, string(b), "actions/checkout@"+mockHash+" # v4.1.0")
+	})
+}
