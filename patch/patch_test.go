@@ -138,7 +138,9 @@ func TestPatchRepository_HasChanges_NewPR(t *testing.T) {
 
 	xr := mock.Execer{
 		GenerateFSFn: func() afero.Fs {
-			return emptyMemFS()
+			fs := emptyMemFS()
+			require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
+			return fs
 		},
 		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
 			switch {
@@ -180,6 +182,43 @@ func TestPatchRepository_HasChanges_NewPR(t *testing.T) {
 	require.Equal(t, ".github/workflows", addedPath)
 	require.Equal(t, "chore(sec|gha): uses pinned versions of github actions", commitMessage)
 	require.Equal(t, defaultTagetBranch, pushedBranch)
+}
+
+// TestPatchRepository_IncludeActions_OnlyAddsExistingPaths verifies that paths missing in
+// the repository are not staged, since git add fails on them.
+func TestPatchRepository_IncludeActions_OnlyAddsExistingPaths(t *testing.T) {
+	var added []string
+	xr := mock.Execer{
+		GenerateFSFn: func() afero.Fs {
+			fs := emptyMemFS()
+			require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
+			require.NoError(t, afero.WriteFile(fs, "action.yml", []byte("name: x\n"), 0644))
+			return fs
+		},
+		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+			if command == "git" && args[0] == "status" {
+				return iteratorexec.Result{Stdout: "M  action.yml\n"}, nil
+			}
+			return iteratorexec.Result{}, fmt.Errorf("unexpected Run call: %s %v", command, args)
+		},
+		RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+			switch {
+			case command == "git" && args[0] == "add":
+				added = append(added, args[1])
+				return "", nil
+			case command == "git" && args[0] == "checkout":
+				return "", nil
+			case mock.CallIs(t, command, args, "git", "diff", "--cached", "--name-only"), mock.CallIs(t, command, args, "git", "diff", "--cached"):
+				return "", nil
+			default:
+				return "", fmt.Errorf("unexpected RunX call: %s %v", command, args)
+			}
+		},
+	}
+
+	opts := PatchOptions{DryRun: true, IncludeActionDefinitions: true}.withDefaults()
+	require.NoError(t, patchRepository(t.Context(), slog.New(slog.DiscardHandler), nonEmptyRepository, xr, opts))
+	require.Equal(t, []string{".github/workflows", "action.yml"}, added)
 }
 
 // TestPatchRepository_HasChanges_PRAlreadyExists verifies that when an open PR
