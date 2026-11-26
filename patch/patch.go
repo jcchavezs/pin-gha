@@ -164,19 +164,13 @@ func actionDefinitionPaths(fs afero.Fs) []string {
 	return paths
 }
 
-// patchFS pins the actions used in the workflow files and, if includeActions is
-// set, in the action definition files too.
-func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string, includeActions bool) ([]string, error) {
-	var changed []string
-	today := time.Now().Format("2006-01-02")
+// pinnableFiles returns the workflow files and, if includeActions is set, the action
+// definition files of the FS.
+func pinnableFiles(fs afero.Fs, includeActions bool) ([]string, error) {
 	var filePaths []string
 	files, err := afero.ReadDir(fs, path.Join(".github", "workflows"))
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
-	}
-
-	if len(files) == 0 {
-		logger.Debug("No files found")
 	}
 
 	for _, file := range files {
@@ -193,6 +187,23 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 
 	if includeActions {
 		filePaths = append(filePaths, actionDefinitionPaths(fs)...)
+	}
+
+	return filePaths, nil
+}
+
+// patchFS pins the actions used in the workflow files and, if includeActions is
+// set, in the action definition files too.
+func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string, includeActions bool) ([]string, error) {
+	var changed []string
+	today := time.Now().Format("2006-01-02")
+	filePaths, err := pinnableFiles(fs, includeActions)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(filePaths) == 0 {
+		logger.Debug("No files found")
 	}
 
 	for _, workflowPath := range filePaths {
@@ -329,6 +340,14 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repository iterat
 	}
 
 	fs := xr.GenerateFS()
+	if files, err := pinnableFiles(fs, opts.IncludeActionDefinitions); err != nil {
+		return err
+	} else if len(files) == 0 {
+		rLogger.Info("The repository has no workflows, skipping")
+		opts.OnRepositorySkipped(ctx, repo, SkippedReasonNoWorkflows)
+		return nil
+	}
+
 	if _, err := patchFS(ctx, rLogger, fs, opts.TrustedOrgs, opts.IncludeActionDefinitions); err != nil {
 		return err
 	}
