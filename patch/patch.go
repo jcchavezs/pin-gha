@@ -253,10 +253,15 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 
 			pkg, version, _ := strings.Cut(uses, "@")
 
-			if version == "" {
-				// A reference we cannot interpret should not prevent pinning the rest of the repository.
-				wfLogger.Warn("Skipping action without a version", "uses", uses)
+			// A reference we cannot interpret should not prevent pinning the rest of the repository.
+			if !actionRefRe.MatchString(pkg) {
+				wfLogger.Warn("Skipping unparsable uses reference", "uses", uses)
 				continue
+			}
+
+			if version == "" {
+				// GitHub runs the default branch when no version is given, so we pin its latest commit.
+				wfLogger.Warn("No version specified for action, pinning the latest commit of the default branch", "uses", uses)
 			}
 
 			if len(version) == 40 { // commit hash length
@@ -427,6 +432,9 @@ func stagedChanges(ctx context.Context, xr iteratorexec.Execer, branch string) (
 	}, nil
 }
 
+// actionRefRe matches the owner/repo[/path] shape of a remote action or reusable workflow.
+var actionRefRe = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(/.+)?$`)
+
 var errUnresolvedVersion = errors.New("unresolved version")
 
 // resolveCommitHash is a package-level variable so tests can inject a mock
@@ -480,6 +488,21 @@ func resolveCommitHashInRepository(ctx context.Context, repository iterator.Repo
 func resolveCommitHashForVersion(ctx context.Context, xr iteratorexec.Execer, version string) (string, string, error) {
 	if _, err := xr.RunX(ctx, "git", "fetch", "--tags"); err != nil {
 		return "", "", fmt.Errorf("fetching tags: %w", err)
+	}
+
+	// Without a version GitHub runs the default branch, so we resolve its latest commit.
+	if version == "" {
+		hash, _, err := getLastReachableCommit(ctx, xr, "HEAD")
+		if err != nil {
+			return "", "", err
+		}
+
+		branch, err := xr.RunX(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+		if err != nil {
+			return "", "", fmt.Errorf("getting default branch: %w", err)
+		}
+
+		return hash, strings.TrimSpace(branch), nil
 	}
 
 	// If the version looks like a full semver (i.e. has three dot-separated parts), we try directly
