@@ -29,6 +29,7 @@ const (
 	SkippedReasonUnknown		 SkippedReason = iota
 	SkippedReasonEmptyRepository
 	SkippedReasonAlreadyPinned
+	SkippedReasonNoWorkflows
 )
 
 func (r SkippedReason) String() string {
@@ -37,6 +38,8 @@ func (r SkippedReason) String() string {
 		return "empty repository"
 	case SkippedReasonAlreadyPinned:
 		return "already pinned actions"
+	case SkippedReasonNoWorkflows:
+		return "no workflows found"
 	default:
 		return "unknown reason"
 	}

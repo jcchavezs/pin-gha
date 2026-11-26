@@ -54,10 +54,13 @@ func TestMissingCommands(t *testing.T) {
 	})
 }
 
-// emptyMemFS returns an afero.MemMapFs with no .github/workflows directory,
-// so patchLocalRepositoryFS returns immediately with no changes.
-func emptyMemFS() afero.Fs {
-	return afero.NewMemMapFs()
+// workflowMemFS returns an afero.MemMapFs with a workflow that has nothing to pin,
+// so patchFS finds files to process but makes no changes.
+func workflowMemFS() afero.Fs {
+	fs := afero.NewMemMapFs()
+	_ = fs.MkdirAll(".github/workflows", 0755)
+	_ = afero.WriteFile(fs, ".github/workflows/ci.yml", []byte("jobs: {}\n"), 0644)
+	return fs
 }
 
 var nonEmptyRepository = iterator.Repository{Name: "org/repo", Size: 1}
@@ -73,6 +76,19 @@ func TestPatchRepository_EmptyRepository(t *testing.T) {
 	require.Equal(t, SkippedReasonEmptyRepository, skippedReason)
 }
 
+func TestPatchRepository_NoWorkflows(t *testing.T) {
+	var skippedReason SkippedReason
+	opts := PatchOptions{
+		OnRepositorySkipped: func(_ context.Context, _ string, reason SkippedReason) { skippedReason = reason },
+	}.withDefaults()
+
+	// A mock execer without functions fails the test if any command is run.
+	xr := mock.Execer{GenerateFSFn: func() afero.Fs { return afero.NewMemMapFs() }}
+	require.NoError(t, patchRepository(t.Context(), slog.New(slog.DiscardHandler), nonEmptyRepository, xr, opts))
+	require.Equal(t, SkippedReasonNoWorkflows, skippedReason)
+	require.Equal(t, "no workflows found", skippedReason.String())
+}
+
 func TestResolveCommitHashInRepository_EmptyRepository(t *testing.T) {
 	_, _, err := resolveCommitHashInRepository(t.Context(), iterator.Repository{Name: "org/action"}, mock.Execer{}, "v4")
 	require.ErrorIs(t, err, errUnresolvedVersion)
@@ -85,9 +101,9 @@ func TestPatchRepository_NoChanges(t *testing.T) {
 	ctx := context.Background()
 
 	xr := mock.Execer{
-		// GenerateFS returns an empty FS — no .github/workflows, so no patches are applied.
+		// GenerateFS returns a workflow with nothing to pin, so no patches are applied.
 		GenerateFSFn: func() afero.Fs {
-			return emptyMemFS()
+			return workflowMemFS()
 		},
 		// HasChanges calls Run("git", "status", "-s") and expects empty stdout → no changes.
 		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
@@ -138,7 +154,7 @@ func TestPatchRepository_HasChanges_NewPR(t *testing.T) {
 
 	xr := mock.Execer{
 		GenerateFSFn: func() afero.Fs {
-			return emptyMemFS()
+			return workflowMemFS()
 		},
 		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
 			switch {
@@ -182,6 +198,43 @@ func TestPatchRepository_HasChanges_NewPR(t *testing.T) {
 	require.Equal(t, defaultTagetBranch, pushedBranch)
 }
 
+// TestPatchRepository_IncludeActions_OnlyAddsExistingPaths verifies that paths missing in
+// the repository are not staged, since git add fails on them.
+func TestPatchRepository_IncludeActions_OnlyAddsExistingPaths(t *testing.T) {
+	var added []string
+	xr := mock.Execer{
+		GenerateFSFn: func() afero.Fs {
+			fs := afero.NewMemMapFs()
+			require.NoError(t, fs.MkdirAll(".github/workflows", 0755))
+			require.NoError(t, afero.WriteFile(fs, "action.yml", []byte("name: x\n"), 0644))
+			return fs
+		},
+		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
+			if command == "git" && args[0] == "status" {
+				return iteratorexec.Result{Stdout: "M  action.yml\n"}, nil
+			}
+			return iteratorexec.Result{}, fmt.Errorf("unexpected Run call: %s %v", command, args)
+		},
+		RunXFn: func(ctx context.Context, command string, args ...string) (string, error) {
+			switch {
+			case command == "git" && args[0] == "add":
+				added = append(added, args[1])
+				return "", nil
+			case command == "git" && args[0] == "checkout":
+				return "", nil
+			case mock.CallIs(t, command, args, "git", "diff", "--cached", "--name-only"), mock.CallIs(t, command, args, "git", "diff", "--cached"):
+				return "", nil
+			default:
+				return "", fmt.Errorf("unexpected RunX call: %s %v", command, args)
+			}
+		},
+	}
+
+	opts := PatchOptions{DryRun: true, IncludeActionDefinitions: true}.withDefaults()
+	require.NoError(t, patchRepository(t.Context(), slog.New(slog.DiscardHandler), nonEmptyRepository, xr, opts))
+	require.Equal(t, []string{".github/workflows", "action.yml"}, added)
+}
+
 // TestPatchRepository_HasChanges_PRAlreadyExists verifies that when an open PR
 // already exists, patchRepository succeeds (updates the PR) without creating a new one.
 func TestPatchRepository_HasChanges_PRAlreadyExists(t *testing.T) {
@@ -189,7 +242,7 @@ func TestPatchRepository_HasChanges_PRAlreadyExists(t *testing.T) {
 
 	xr := mock.Execer{
 		GenerateFSFn: func() afero.Fs {
-			return emptyMemFS()
+			return workflowMemFS()
 		},
 		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
 			switch {
@@ -233,7 +286,7 @@ func TestPatchRepository_HasChangesError(t *testing.T) {
 
 	xr := mock.Execer{
 		GenerateFSFn: func() afero.Fs {
-			return emptyMemFS()
+			return workflowMemFS()
 		},
 		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
 			return iteratorexec.Result{}, errors.New("git status failed")
@@ -657,7 +710,7 @@ func TestPatchRepository_DryRun(t *testing.T) {
 			var gotRepo string
 
 			xr := mock.Execer{
-				GenerateFSFn: func() afero.Fs { return emptyMemFS() },
+				GenerateFSFn: func() afero.Fs { return workflowMemFS() },
 				RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
 					if command == "git" && args[0] == "status" {
 						return iteratorexec.Result{Stdout: "M  .github/workflows/ci.yml\n"}, nil
@@ -704,7 +757,7 @@ func TestPatchRepository_DryRun(t *testing.T) {
 
 func TestPatchRepository_DryRun_NoChanges(t *testing.T) {
 	xr := mock.Execer{
-		GenerateFSFn: func() afero.Fs { return emptyMemFS() },
+		GenerateFSFn: func() afero.Fs { return workflowMemFS() },
 		RunFn: func(ctx context.Context, command string, args ...string) (iteratorexec.Result, error) {
 			return iteratorexec.Result{Stdout: ""}, nil
 		},
