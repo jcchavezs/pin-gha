@@ -38,7 +38,9 @@ The repository can be specified as `<owner>/<repo>` or as a full GitHub URL.
 pin-gha repository <owner/repo>
 ```
 
-### Pin all repositories of an owner (user or organization)
+### Pin repositories of an owner (user or organization)
+
+For user accounts, only public repositories are processed, even when authenticated. Use `pin-gha repository <owner/repo>` for private user repositories.
 
 ```sh
 pin-gha owner <owner>
