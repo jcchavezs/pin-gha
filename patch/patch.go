@@ -218,7 +218,7 @@ func readWorkflow(logger *slog.Logger, fs afero.Fs, workflowPath string, trusted
 	wfLogger := logger.With("workflow", workflowPath)
 	wf := workflow{}
 	if err := yaml.Unmarshal(original, &wf); err != nil {
-		return workflowFile{}, fmt.Errorf("unmarshalling workflow %q: %v", workflowPath, err)
+		return workflowFile{}, fmt.Errorf("unmarshalling workflow %q: %w", workflowPath, err)
 	}
 
 	var allUses []string

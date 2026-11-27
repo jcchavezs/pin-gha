@@ -112,7 +112,7 @@ pin-gha repository owner/repo --major-version-alignment
 pin-gha repository owner/repo --all-version-alignment
 ```
 
-Alignment is applied per repository, so with `owner` each repository is aligned on its own. The actions of the same repository (e.g. `github/codeql-action/init` and `github/codeql-action/analyze`) are aligned together. Each use is pinned to the highest resolved release of its group (`v4.2.0` over `v4.1.0`). Pre-releases are never chosen as the target and a use is never moved backwards. References that are not releases, such as branches, and uses already pinned to a commit hash are left as they are.
+Alignment is applied per repository, so with `owner` each repository is aligned on its own. The actions of the same repository (e.g. `github/codeql-action/init` and `github/codeql-action/analyze`) are aligned together. Each use is pinned to the highest resolved release of its group (`v4.2.0` over `v4.1.0`). Pre-releases are never chosen as the target and a use is never moved backwards. References that are not releases, such as branches, and uses already pinned to a commit hash are left as they are. Because of this, uses pinned in a previous run are not taken into account: align the versions before pinning, as a newly added use is not aligned with the ones already pinned.
 
 Global flags:
 
