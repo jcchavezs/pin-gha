@@ -99,6 +99,21 @@ The `repository` and `owner` subcommands share the following flags:
 | `--include-actions` | `false`                                         | Also pin `uses` in `action.yml`/`action.yaml` action definitions                   |
 | `--pr-commit-msg`| `chore(security): uses pinned versions of actions` | Commit message used when committing pinned actions                                 |
 
+The `repository`, `owner` and `local-repository` subcommands also support version alignment, which pins the uses of the same action found in a repository to a single version:
+
+| Flag                        | Description                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------- |
+| `--major-version-alignment` | Aligns the uses of each action within the same major version                                      |
+| `--all-version-alignment`   | Aligns all the uses of each action to one version, whatever their major (exclusive with the above) |
+
+```sh
+pin-gha repository owner/repo --major-version-alignment
+# Or align across all major versions:
+pin-gha repository owner/repo --all-version-alignment
+```
+
+Alignment is applied per repository, so with `owner` each repository is aligned on its own. The actions of the same repository (e.g. `github/codeql-action/init` and `github/codeql-action/analyze`) are aligned together. Each use is pinned to the highest resolved release of its group (`v4.2.0` over `v4.1.0`). Pre-releases are never chosen as the target and a use is never moved backwards. References that are not releases, such as branches, and uses already pinned to a commit hash are left as they are.
+
 Global flags:
 
 | Flag          | Default  | Description                                          |

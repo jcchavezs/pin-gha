@@ -126,7 +126,7 @@ func normalizeRepositoryName(repo string) string {
 // LocalRepository processes a local repository at the given path. This is used for testing and can also be used by users who want to apply the patch to a local repository without creating a PR.
 func LocalRepository(ctx context.Context, repoPath string, opts LocalPatchOptions) error {
 	opts = opts.withDefaults()
-	changed, err := patchFS(ctx, slog.New(opts.LogHandler), afero.NewBasePathFs(afero.NewOsFs(), repoPath), opts.TrustedOrgs, opts.IncludeActionDefinitions)
+	changed, err := patchFS(ctx, slog.New(opts.LogHandler), afero.NewBasePathFs(afero.NewOsFs(), repoPath), opts.TrustedOrgs, opts.IncludeActionDefinitions, opts.VersionAlignment)
 	for _, f := range changed {
 		opts.OnFileChanged(ctx, f)
 	}
@@ -136,8 +136,8 @@ func LocalRepository(ctx context.Context, repoPath string, opts LocalPatchOption
 // patchLocalRepositoryFS applies the patch to the workflow files of the given
 // FS and returns the paths of the files whose content changed. This is used for
 // testing.
-func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string) ([]string, error) {
-	return patchFS(ctx, logger, fs, trustedOrgs, false)
+func patchLocalRepositoryFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string, alignment VersionAlignment) ([]string, error) {
+	return patchFS(ctx, logger, fs, trustedOrgs, false, alignment)
 }
 
 // actionDefinitionPaths returns the action definition files (action.yml and
@@ -192,11 +192,122 @@ func pinnableFiles(fs afero.Fs, includeActions bool) ([]string, error) {
 	return filePaths, nil
 }
 
+// actionUse is a third-party action used by a workflow step that has to be pinned.
+type actionUse struct {
+	// raw is the value of uses as written in the workflow.
+	raw     string
+	action  string
+	version string
+}
+
+type workflowFile struct {
+	path     string
+	original []byte
+	// uses are the actions to pin, in the order they appear in the workflow.
+	uses []actionUse
+}
+
+// readWorkflow reads the file at the given path and returns the actions that
+// have to be pinned.
+func readWorkflow(logger *slog.Logger, fs afero.Fs, workflowPath string, trustedOrgs []string) (workflowFile, error) {
+	original, err := afero.ReadFile(fs, workflowPath)
+	if err != nil {
+		return workflowFile{}, err
+	}
+
+	wfLogger := logger.With("workflow", workflowPath)
+	wf := workflow{}
+	if err := yaml.Unmarshal(original, &wf); err != nil {
+		return workflowFile{}, fmt.Errorf("unmarshalling workflow %q: %v", workflowPath, err)
+	}
+
+	var allUses []string
+	for _, job := range wf.Jobs {
+		allUses = append(allUses, job.Uses)
+		for _, step := range job.Steps {
+			allUses = append(allUses, step.Uses)
+		}
+	}
+	for _, step := range wf.Runs.Steps {
+		allUses = append(allUses, step.Uses)
+	}
+
+	var uses []actionUse
+	for _, use := range allUses {
+		raw := strings.TrimSpace(use)
+		if raw == "" {
+			continue
+		}
+
+		isTrusted := false
+		for _, org := range trustedOrgs {
+			if strings.HasPrefix(raw, org+"/") {
+				isTrusted = true
+				break
+			}
+		}
+		if isTrusted {
+			wfLogger.Debug("Skipping trusted action", "uses", raw)
+			continue
+		}
+
+		// "$/" references an action in the same repository at the running commit so there is nothing to pin.
+		if strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "$/") {
+			wfLogger.Debug("Skipping local action", "uses", raw)
+			continue
+		}
+
+		// Docker image actions are not pinned yet: https://github.com/jcchavezs/pin-gha/issues/29
+		if strings.HasPrefix(raw, "docker://") {
+			wfLogger.Debug("Skipping docker action", "uses", raw)
+			continue
+		}
+
+		action, version, _ := strings.Cut(raw, "@")
+
+		if version == "" {
+			// GitHub runs the default branch when no version is given, so we pin its latest commit.
+			wfLogger.Warn("No version specified for action, pinning the latest commit of the default branch", "uses", raw)
+		}
+
+		if len(version) == 40 { // commit hash length
+			continue
+		}
+
+		uses = append(uses, actionUse{raw: raw, action: action, version: version})
+	}
+
+	return workflowFile{path: workflowPath, original: original, uses: uses}, nil
+}
+
+// resolveActions resolves every distinct action version once. refs holds them
+// in the order they were found.
+func resolveActions(ctx context.Context, workflows []workflowFile) (resolutions map[actionVersion]resolvedAction, refs []actionVersion, err error) {
+	resolutions = make(map[actionVersion]resolvedAction)
+	for _, wf := range workflows {
+		for _, use := range wf.uses {
+			ref := actionVersion{action: use.action, version: use.version}
+			if _, exists := resolutions[ref]; exists {
+				continue
+			}
+
+			hash, version, err := resolveCommitHash(ctx, use.action, use.version)
+			if err != nil && !errors.Is(err, errUnresolvedVersion) {
+				return nil, nil, fmt.Errorf("resolving %s@%s: %w", use.action, use.version, err)
+			}
+			resolutions[ref] = resolvedAction{hash: hash, version: version, err: err}
+			refs = append(refs, ref)
+		}
+	}
+
+	return resolutions, refs, nil
+}
+
 // patchFS pins the actions used in the workflow files and, if includeActions is
-// set, in the action definition files too.
-func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string, includeActions bool) ([]string, error) {
-	var changed []string
-	today := time.Now().Format("2006-01-02")
+// set, in the action definition files too. Every file is read and every action
+// resolved before any file is written, so an error leaves the FS untouched and
+// the versions can be aligned across files.
+func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs []string, includeActions bool, alignment VersionAlignment) ([]string, error) {
 	filePaths, err := pinnableFiles(fs, includeActions)
 	if err != nil {
 		return nil, err
@@ -206,102 +317,45 @@ func patchFS(ctx context.Context, logger *slog.Logger, fs afero.Fs, trustedOrgs 
 		logger.Debug("No files found")
 	}
 
-	for _, workflowPath := range filePaths {
-		original, err := afero.ReadFile(fs, workflowPath)
+	var workflows []workflowFile
+	for _, filePath := range filePaths {
+		wf, err := readWorkflow(logger, fs, filePath, trustedOrgs)
 		if err != nil {
-			return changed, err
+			return nil, err
 		}
-		wfb := original
+		workflows = append(workflows, wf)
+	}
 
-		wfLogger := logger.With("workflow", workflowPath)
-		wf := workflow{}
-		if err := yaml.Unmarshal(wfb, &wf); err != nil {
-			return changed, fmt.Errorf("unmarshalling workflow %q: %v", workflowPath, err)
-		}
+	resolutions, refs, err := resolveActions(ctx, workflows)
+	if err != nil {
+		return nil, err
+	}
+	highest := highestVersions(refs, resolutions, alignment)
 
-		var allUses []string
-		for _, job := range wf.Jobs {
-			allUses = append(allUses, job.Uses)
-			for _, step := range job.Steps {
-				allUses = append(allUses, step.Uses)
-			}
-		}
-		for _, step := range wf.Runs.Steps {
-			allUses = append(allUses, step.Uses)
-		}
-
-		for _, use := range allUses {
-			uses := strings.TrimSpace(use)
-			if uses == "" {
+	var changed []string
+	today := time.Now().Format("2006-01-02")
+	for _, wf := range workflows {
+		wfLogger := logger.With("workflow", wf.path)
+		content := wf.original
+		for _, use := range wf.uses {
+			resolved := resolutions[actionVersion{action: use.action, version: use.version}]
+			if errors.Is(resolved.err, errUnresolvedVersion) {
+				content = replaceUses(content, use.raw, fmt.Sprintf("%s@%s # TODO: use a release instead", use.action, use.version))
 				continue
 			}
 
-			isTrusted := false
-			for _, org := range trustedOrgs {
-				if strings.HasPrefix(uses, org+"/") {
-					isTrusted = true
-					break
-				}
-			}
-			if isTrusted {
-				wfLogger.Debug("Skipping trusted action", "uses", uses)
-				continue
-			}
-
-			// "$/" references an action in the same repository at the running commit so there is nothing to pin.
-			if strings.HasPrefix(uses, "./") || strings.HasPrefix(uses, "$/") {
-				wfLogger.Debug("Skipping local action", "uses", uses)
-				//if exists, _ := afero.Exists(fs, uses); exists {
-				// local action
-				continue
-				//}
-			}
-
-			// Docker image actions are not pinned yet: https://github.com/jcchavezs/pin-gha/issues/29
-			if strings.HasPrefix(uses, "docker://") {
-				wfLogger.Debug("Skipping docker action", "uses", uses)
-				continue
-			}
-
-			pkg, version, _ := strings.Cut(uses, "@")
-
-			if version == "" {
-				// GitHub runs the default branch when no version is given, so we pin its latest commit.
-				wfLogger.Warn("No version specified for action, pinning the latest commit of the default branch", "uses", uses)
-			}
-
-			if len(version) == 40 { // commit hash length
-				continue
-			}
-
-			var newUses string
-			resolvedHash, resolvedVersion, err := resolveCommitHash(ctx, pkg, version)
-			switch err {
-			case nil:
-				if resolvedVersion == "master" || resolvedVersion == "main" {
-					newUses = fmt.Sprintf("%s@%s # %s on %s, TODO: use a release instead", pkg, resolvedHash, resolvedVersion, today)
-				} else if strings.Count(resolvedVersion, ".") < 2 {
-					newUses = fmt.Sprintf("%s@%s # %s on %s, TODO: use a release instead", pkg, resolvedHash, resolvedVersion, today)
-				} else {
-					newUses = fmt.Sprintf("%s@%s # %s", pkg, resolvedHash, resolvedVersion)
-				}
-			case errUnresolvedVersion:
-				newUses = fmt.Sprintf("%s@%s # TODO: use a release instead", pkg, version)
-			default:
-				return changed, fmt.Errorf("getting commit hash: %v", err)
-			}
-
-			wfb = replaceUses(wfb, uses, newUses)
+			resolved = alignedResolution(wfLogger, use.action, resolved, highest, alignment)
+			content = replaceUses(content, use.raw, pinnedUses(use.action, resolved, today))
 		}
 
-		if bytes.Equal(original, wfb) {
+		if bytes.Equal(wf.original, content) {
 			continue
 		}
 
-		if err := afero.WriteFile(fs, workflowPath, wfb, 0644); err != nil {
+		if err := afero.WriteFile(fs, wf.path, content, 0644); err != nil {
 			return changed, err
 		}
-		changed = append(changed, workflowPath)
+		changed = append(changed, wf.path)
 	}
 
 	return changed, nil
@@ -350,7 +404,7 @@ func patchRepository(ctx context.Context, logger *slog.Logger, repository iterat
 		return nil
 	}
 
-	if _, err := patchFS(ctx, rLogger, fs, opts.TrustedOrgs, opts.IncludeActionDefinitions); err != nil {
+	if _, err := patchFS(ctx, rLogger, fs, opts.TrustedOrgs, opts.IncludeActionDefinitions, opts.VersionAlignment); err != nil {
 		return err
 	}
 
@@ -464,13 +518,7 @@ var resolveCommitHash = ResolveCommitHashForAction
 // - the resolved version (which may be different from the input version if it was a tag or branch)
 // - an error if the version could not be resolved.
 func ResolveCommitHashForAction(ctx context.Context, action, version string) (string, string, error) {
-	actionRepo := action
-	if strings.Count(action, "/") > 1 {
-		// if the action is not in the root of the repository the action name
-		// will include the path but we only need the organization/repository name.
-		pieces := strings.SplitN(action, "/", 3)
-		actionRepo = strings.Join(pieces[0:2], "/")
-	}
+	actionRepo := actionRepository(action)
 
 	var (
 		hash            string

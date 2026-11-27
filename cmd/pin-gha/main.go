@@ -58,6 +58,7 @@ var repositoryCmd = &cobra.Command{
 			TrustedOrgs:              patchFlags.prTrustedOrgs,
 			CommitMsg:                patchFlags.prCommitMsg,
 			NeedsFork:                patchFlags.prFork,
+			VersionAlignment:         versionAlignment(),
 			DryRun:                   patchFlags.dryRun,
 			IncludeActionDefinitions: patchFlags.includeActions,
 			OnDryRunChanges: func(ctx context.Context, repo string, d patch.DryRunDetails) {
@@ -91,6 +92,7 @@ var ownerCmd = &cobra.Command{
 			TrustedOrgs:              patchFlags.prTrustedOrgs,
 			CommitMsg:                patchFlags.prCommitMsg,
 			NeedsFork:                patchFlags.prFork,
+			VersionAlignment:         versionAlignment(),
 			DryRun:                   patchFlags.dryRun,
 			IncludeActionDefinitions: patchFlags.includeActions,
 			OnDryRunChanges: func(ctx context.Context, repo string, d patch.DryRunDetails) {
@@ -136,6 +138,7 @@ var localRepositoryCmd = &cobra.Command{
 		var changed []string
 		err := patch.LocalRepository(cmd.Context(), args[0], patch.LocalPatchOptions{
 			IncludeActionDefinitions: patchFlags.includeActions,
+			VersionAlignment:         versionAlignment(),
 			OnFileChanged: func(_ context.Context, file string) {
 				changed = append(changed, file)
 				cmd.Printf("Pinned actions in %s\n", file)
