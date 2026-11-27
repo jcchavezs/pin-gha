@@ -73,9 +73,9 @@ var repositoryCmd = &cobra.Command{
 	},
 }
 
-var organizationCmd = &cobra.Command{
-	Use:   "organization <name>",
-	Short: "Pin actions across all repositories in a GitHub organization",
+var ownerCmd = &cobra.Command{
+	Use:   "owner <name>",
+	Short: "Pin actions across all repositories of a GitHub user or organization",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cmd.SilenceUsage = true
@@ -85,7 +85,7 @@ var organizationCmd = &cobra.Command{
 			return fmt.Errorf("getting PR body: %w", err)
 		}
 
-		return patch.Organization(cmd.Context(), args[0], patch.PatchOptions{
+		return patch.Owner(cmd.Context(), args[0], patch.PatchOptions{
 			TargetBranch:             patchFlags.prBranch,
 			PRBody:                   prBody,
 			TrustedOrgs:              patchFlags.prTrustedOrgs,

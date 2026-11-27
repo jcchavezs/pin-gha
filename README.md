@@ -38,10 +38,12 @@ The repository can be specified as `<owner>/<repo>` or as a full GitHub URL.
 pin-gha repository <owner/repo>
 ```
 
-### Pin all repositories in an organization
+### Pin repositories of an owner (user or organization)
+
+For user accounts, only public repositories are processed, even when authenticated. Use `pin-gha repository <owner/repo>` for private user repositories.
 
 ```sh
-pin-gha organization <org-name>
+pin-gha owner <owner>
 ```
 
 ### Pin a local repository
@@ -60,7 +62,7 @@ pin-gha local-repository --exit-code . || { echo "Workflow actions are not pinne
 
 ### Pin action definitions (opt-in)
 
-By default only `.github/workflows` is processed. Pass `--include-actions` (available in `local-repository`, `repository` and `organization`) to also pin the `uses` of composite action steps in `action.yml`/`action.yaml` files, both in the repository root and in `.github/actions/*/`.
+By default only `.github/workflows` is processed. Pass `--include-actions` (available in `local-repository`, `repository` and `owner`) to also pin the `uses` of composite action steps in `action.yml`/`action.yaml` files, both in the repository root and in `.github/actions/*/`.
 
 ```sh
 pin-gha local-repository --include-actions .
@@ -85,7 +87,7 @@ Hash: 11bd71901bbe5b1630ceea73d27597364c9af683
 
 ## Options
 
-The `repository` and `organization` subcommands share the following flags:
+The `repository` and `owner` subcommands share the following flags:
 
 | Flag             | Default                                            | Description                                                                        |
 | ---------------- | -------------------------------------------------- | ---------------------------------------------------------------------------------- |
